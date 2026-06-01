@@ -54,6 +54,39 @@ def test_dashboard_failed_request_restores_button_and_shows_failure_toast():
         assert not page.locator("#dryRunButton").is_disabled()
 
 
+def test_dashboard_mobile_viewports_keep_core_actions_visible_and_non_overlapping():
+    with _mock_dashboard_server() as base_url, _browser_page() as page:
+        page.goto(f"{base_url}?lang=en")
+        page.wait_for_selector("#dryRunButton")
+
+        for viewport in [{"width": 390, "height": 844}, {"width": 768, "height": 1024}]:
+            page.set_viewport_size(viewport)
+            page.wait_for_timeout(50)
+            layout = _mobile_layout_state(page)
+
+            assert layout["railDisplay"] == "none"
+            assert layout["topbarHeight"] > 60
+            assert layout["topbarRows"] >= 2
+            assert layout["topbarOverlap"] is False
+            assert layout["stripColumns"] == 2
+            assert page.locator("#dryRunButton").is_visible()
+            assert page.locator("#observeButton").is_visible()
+            assert page.locator("#testnetEvidenceButton").is_visible()
+
+        _click_and_expect_feedback(page, "#dryRunButton", "Testnet dry-run passed")
+        assert "good" in page.locator("#dryRunStatus").get_attribute("class")
+
+
+def test_dashboard_observe_request_failure_restores_button_and_shows_failure_toast():
+    with _mock_dashboard_server(fail_observe=True) as base_url, _browser_page() as page:
+        page.goto(f"{base_url}?lang=en")
+        page.wait_for_selector("#observeButton")
+
+        _click_and_expect_feedback(page, "#observeButton", "Testnet observation failed: Request failed")
+        assert page.locator("#observeButton").get_attribute("aria-busy") is None
+        assert not page.locator("#observeButton").is_disabled()
+
+
 def _click_and_expect_feedback(page, selector, expected_toast):
     button = page.locator(selector).first
     button.click()
@@ -70,6 +103,36 @@ def _click_and_expect_feedback(page, selector, expected_toast):
     page.wait_for_function(
         """text => document.querySelector("#toast")?.textContent.includes(text)""",
         arg=expected_toast,
+    )
+
+
+def _mobile_layout_state(page):
+    return page.evaluate(
+        """
+        () => {
+          const topbar = document.querySelector(".topbar");
+          const strip = document.querySelector(".strip");
+          const children = [...document.querySelectorAll(".topbar > *")].filter((el) => {
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && getComputedStyle(el).display !== "none";
+          });
+          const rects = children.map((el) => {
+            const rect = el.getBoundingClientRect();
+            return { x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom };
+          });
+          const topbarOverlap = rects.some((a, index) => rects.some((b, otherIndex) => {
+            if (otherIndex <= index) return false;
+            return a.x < b.right && a.right > b.x && a.y < b.bottom && a.bottom > b.y;
+          }));
+          return {
+            railDisplay: getComputedStyle(document.querySelector(".rail")).display,
+            topbarHeight: topbar.getBoundingClientRect().height,
+            topbarRows: new Set(rects.map((rect) => Math.round(rect.y))).size,
+            topbarOverlap,
+            stripColumns: getComputedStyle(strip).gridTemplateColumns.trim().split(/\\s+/).length,
+          };
+        }
+        """
     )
 
 
@@ -107,9 +170,10 @@ def _browser_page():
     return BrowserPage()
 
 
-def _mock_dashboard_server(fail_dry_run=False):
+def _mock_dashboard_server(fail_dry_run=False, fail_observe=False):
     server = ThreadingHTTPServer(("127.0.0.1", _free_port()), _MockDashboardHandler)
     server.fail_dry_run = fail_dry_run
+    server.fail_observe = fail_observe
     base_url = f"http://127.0.0.1:{server.server_address[1]}/"
 
     class ServerContext:
@@ -178,6 +242,9 @@ class _MockDashboardHandler(BaseHTTPRequestHandler):
                 "preflight": _preflight_payload(status="pass"),
             }
         elif self.path.endswith("/api/testnet-observe"):
+            if getattr(self.server, "fail_observe", False):
+                self._send_json({"status": "fail", "reason": "mock_failure"}, status=500)
+                return
             payload = _failed_observation_payload()
         elif self.path.endswith("/api/automation-control"):
             payload = {"status": "ok", "preflight": _preflight_payload(status="pass")}

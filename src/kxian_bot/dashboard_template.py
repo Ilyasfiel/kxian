@@ -602,6 +602,91 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       .value { font-size: 16px; }
       th, td { padding: 0 6px; }
     }
+    @media (max-width: 1024px) {
+      body {
+        min-width: 0;
+        height: auto;
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+      .app {
+        min-height: 100vh;
+        height: auto;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto;
+        gap: 8px;
+        overflow: visible;
+      }
+      .rail {
+        display: none;
+      }
+      .topbar,
+      .strip,
+      .nav,
+      .main,
+      .inspector {
+        grid-column: 1 / -1;
+        grid-row: auto;
+      }
+      .topbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: stretch;
+        gap: 6px;
+      }
+      .topbar > * {
+        flex: 1 1 160px;
+        min-width: 0;
+      }
+      .topbar input.cmd {
+        flex: 1 1 100%;
+      }
+      .language-control {
+        width: 100%;
+      }
+      .language-control .lang-switch {
+        flex: 1 1 auto;
+      }
+      .topbar button,
+      .topbar select,
+      .topbar input {
+        width: 100%;
+      }
+      .strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .panel-grid {
+        grid-template-columns: 1fr;
+      }
+      .main {
+        grid-template-rows: auto auto auto;
+      }
+      .nav {
+        grid-template-rows: auto auto auto auto;
+      }
+      .inspector {
+        grid-template-rows: auto;
+      }
+      .nav-list,
+      .table-wrap,
+      .events,
+      .acceptance-timeline,
+      .check-list {
+        max-height: none;
+      }
+      .toast {
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        max-width: none;
+      }
+      .value {
+        font-size: 16px;
+      }
+      .metric {
+        padding: 8px 10px;
+      }
+    }
   </style>
 </head>
 <body>

@@ -17,6 +17,10 @@ def test_ci_runs_tests_compile_and_offline_smoke():
     assert "python -m pytest -v" in workflow
     assert "python -m compileall src/kxian_bot" in workflow
     assert "paper-dry-run --input-file sample_data/ohlcv_smoke.csv" in workflow
+    assert "- name: Secret scan" in workflow
+    assert "git ls-files | grep -E" in workflow
+    assert "git grep -IEn" in workflow
+    assert "PRIVATE KEY" in workflow
     assert "KXIAN_MODE: paper" in workflow
     assert "KXIAN_ALLOW_LIVE: \"false\"" in workflow
     assert "KXIAN_ENABLE_LIVE_AUTOTRADE: \"false\"" in workflow
@@ -31,11 +35,11 @@ def test_chinese_docs_record_testnet_acceptance_without_live_steps():
     assert "332ce95c-dcc2-4e8b-9f87-b335f72db2db" in record
     assert "exchange_order_id=9311985" in record
     assert "phase=testnet_observed_ready_for_live_review" in record
-    assert "testnet-close-loop" in runbook
+    assert "测试网闭环" in runbook
     assert "--evidence-out" in runbook
     assert "进入 bounded `--execute-loop` 下单观察前" in runbook
     assert "kxian-bot launch-checklist --target live" not in runbook
-    assert "不要执行 `promote-profile-to-live`" in runbook
+    assert "不执行 `promote-profile-to-live`" in runbook
     for block in runbook.split("```powershell")[1:]:
         commands = block.split("```", 1)[0]
         assert "launch-checklist --target live" not in commands
@@ -55,5 +59,8 @@ def test_chinese_release_notes_and_evidence_spec_record_boundaries():
     assert "kxian.testnet.evidence.v1" in evidence_spec
     assert "live_ready=false" in evidence_spec
     assert "credentials.present" in evidence_spec
+    assert "`audit` 用于复核证据生成环境和契约状态" in evidence_spec
+    assert "content_sha256" in evidence_spec
+    assert "testnet_evidence_contract_failures" in evidence_spec
     assert "X-MBX-APIKEY" in evidence_spec
     assert "signature" in evidence_spec

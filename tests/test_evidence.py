@@ -1,4 +1,5 @@
 import json
+import re
 
 from kxian_bot.config import RuntimeConfig
 from kxian_bot.evidence import (
@@ -99,6 +100,18 @@ def test_build_testnet_evidence_uses_fixed_scope_and_no_secret_values(tmp_path):
     assert "secret-value" not in json.dumps(evidence)
     assert evidence["acceptance"]["live_ready"] is False
     assert evidence["redaction"]["credential_presence"] == "boolean_only"
+    assert evidence["audit"]["command_context"]["command"] == "test"
+    assert evidence["audit"]["command_context"]["profile_key"] == "testnet:binance:BTCUSDT:4h"
+    assert evidence["audit"]["command_context"]["mode"] == "testnet"
+    assert evidence["audit"]["command_context"]["exchange"] == "binance"
+    assert evidence["audit"]["command_context"]["symbol"] == "BTCUSDT"
+    assert evidence["audit"]["command_context"]["interval"] == "4h"
+    assert evidence["audit"]["command_context"]["use_testnet"] is True
+    assert evidence["audit"]["schema_validation"]["status"] == "pass"
+    assert evidence["audit"]["schema_validation"]["validator"] == "testnet_evidence_contract_failures"
+    assert evidence["audit"]["schema_validation"]["failure_count"] == 0
+    assert evidence["audit"]["schema_validation"]["failures"] == []
+    assert re.fullmatch(r"[0-9a-f]{64}", evidence["audit"]["content_sha256"])
     assert evidence_contract_failures(evidence) == []
 
 
@@ -147,6 +160,46 @@ def test_build_testnet_evidence_forces_live_flags_closed(tmp_path):
     assert evidence_contract_failures(evidence) == []
 
 
+def test_build_testnet_evidence_records_profile_command_context_and_checklist_status(tmp_path):
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    storage.upsert_strategy_profile(
+        mode="testnet",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="moving_average_cross",
+        parameters={"short_window": 10, "long_window": 30},
+        evidence={"sample_validation": {"status": "pass", "sample_count": 1, "passed_samples": 1, "failed_samples": 0}},
+        updated_by="test",
+    )
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(tmp_path / "kxian.sqlite3"),
+        interval="4h",
+        binance_api_key="api-key-value",
+        binance_api_secret="secret-value",
+    )
+
+    evidence = build_testnet_evidence(
+        config,
+        storage,
+        command="launch-checklist",
+        result={"status": "pass", "reason": "ok"},
+        launch_checklist={"status": "pass", "phase": "testnet_observed_ready_for_live_review"},
+    )
+
+    audit = evidence["audit"]
+    assert audit["command_context"]["profile_key"] == "testnet:binance:BTCUSDT:4h"
+    assert audit["command_context"]["result_status"] == "pass"
+    assert audit["command_context"]["result_reason"] == "ok"
+    assert audit["command_context"]["launch_checklist_status"] == "pass"
+    assert audit["command_context"]["launch_checklist_phase"] == "testnet_observed_ready_for_live_review"
+    assert audit["schema_validation"]["status"] == "pass"
+    assert evidence["acceptance"]["ready_for_live_review"] is True
+    assert evidence["acceptance"]["live_ready"] is False
+    assert evidence_contract_failures(evidence) == []
+
+
 def test_testnet_evidence_contract_rejects_extra_keys_and_live_flags(tmp_path):
     storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
     config = RuntimeConfig(
@@ -163,6 +216,10 @@ def test_testnet_evidence_contract_rejects_extra_keys_and_live_flags(tmp_path):
     evidence["credentials"]["present"]["binance_api_key"] = "yes"
     evidence["safety"]["live_loop_executed"] = True
     evidence["scope"]["live_confirmation_present"] = True
+    evidence["audit"]["command_context"]["profile_key"] = "live:binance:BTCUSDT:4h"
+    evidence["audit"]["schema_validation"]["status"] = "pass"
+    evidence["audit"]["schema_validation"]["failures"] = ["unexpected"]
+    evidence["audit"]["content_sha256"] = "not-a-hash"
 
     failures = evidence_contract_failures(evidence)
 
@@ -172,3 +229,44 @@ def test_testnet_evidence_contract_rejects_extra_keys_and_live_flags(tmp_path):
     assert "live_confirmation_present_must_be_false" in failures
     assert "credential_presence_must_be_boolean:binance_api_key" in failures
     assert "safety_flag_must_be_false:live_loop_executed" in failures
+    assert "invalid_audit_profile_key" in failures
+    assert "invalid_audit_schema_validation_pass_mismatch" in failures
+    assert "invalid_audit_content_sha256" in failures
+
+
+def test_testnet_evidence_contract_requires_audit_integrity_fields(tmp_path):
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(tmp_path / "kxian.sqlite3"),
+        interval="4h",
+        binance_api_key="api-key-value",
+        binance_api_secret="secret-value",
+    )
+    evidence = build_testnet_evidence(config, storage, command="test")
+    evidence["audit"].pop("schema_validation")
+    evidence["audit"].pop("content_sha256")
+
+    failures = evidence_contract_failures(evidence)
+
+    assert "missing_audit_schema_validation" in failures
+    assert "missing_audit_content_sha256" in failures
+
+
+def test_testnet_evidence_contract_rejects_command_context_drift(tmp_path):
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(tmp_path / "kxian.sqlite3"),
+        interval="4h",
+        binance_api_key="api-key-value",
+        binance_api_secret="secret-value",
+    )
+    evidence = build_testnet_evidence(config, storage, command="testnet-dry-run")
+    evidence["audit"]["command_context"]["command"] = "launch-checklist"
+
+    failures = evidence_contract_failures(evidence)
+
+    assert "invalid_audit_command_context:command" in failures
+    assert "invalid_audit_schema_validation_current_mismatch" in failures
+    assert "invalid_audit_content_sha256_mismatch" in failures

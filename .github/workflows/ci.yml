@@ -28,6 +28,18 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Compile
         run: python -m compileall src/kxian_bot
+      - name: Secret scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)(\.env$|.*\.(pem|key|sqlite3|db)$|data/|artifacts/)'; then
+            echo "Tracked runtime secret, database, data, or artifact file found."
+            exit 1
+          fi
+          if git grep -IEn '(AKIA[0-9A-Z]{16}|xox[baprs]-[0-9A-Za-z-]{10,}|-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)' -- .; then
+            echo "High-confidence secret pattern found."
+            exit 1
+          fi
       - name: Test
         run: python -m pytest -v
       - name: Offline smoke
