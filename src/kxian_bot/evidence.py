@@ -126,6 +126,7 @@ def build_testnet_evidence(
     launch_status = launch_checklist.get("status") if isinstance(launch_checklist, dict) else None
     audit = {
         "git_commit": _current_git_commit(),
+        "dirty_worktree": _git_dirty_worktree(),
         "command_context": _audit_command_context(
             command=command,
             config=testnet_config,
@@ -214,6 +215,9 @@ def _testnet_evidence_contract_failures(evidence: dict[str, Any], *, require_aud
         git_commit = audit.get("git_commit")
         if not isinstance(git_commit, str) or (git_commit != "unknown" and not re.fullmatch(r"[0-9a-f]{40}", git_commit)):
             failures.append("invalid_audit_git_commit")
+        dirty_worktree = audit.get("dirty_worktree")
+        if dirty_worktree not in {True, False, "unknown"}:
+            failures.append("invalid_audit_dirty_worktree")
         command_context = audit.get("command_context")
         if not isinstance(command_context, dict):
             failures.append("missing_audit_command_context")
@@ -412,6 +416,21 @@ def _current_git_commit() -> str:
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
     return completed.stdout.strip() or "unknown"
+
+
+def _git_dirty_worktree() -> bool | str:
+    repo_root = Path(__file__).resolve().parents[2]
+    try:
+        completed = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return bool(completed.stdout.strip())
 
 
 def _evidence_content_hash(evidence: dict[str, Any]) -> str:

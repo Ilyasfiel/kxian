@@ -107,6 +107,7 @@ def test_build_testnet_evidence_uses_fixed_scope_and_no_secret_values(tmp_path):
     assert evidence["audit"]["command_context"]["symbol"] == "BTCUSDT"
     assert evidence["audit"]["command_context"]["interval"] == "4h"
     assert evidence["audit"]["command_context"]["use_testnet"] is True
+    assert evidence["audit"]["dirty_worktree"] in {True, False, "unknown"}
     assert evidence["audit"]["schema_validation"]["status"] == "pass"
     assert evidence["audit"]["schema_validation"]["validator"] == "testnet_evidence_contract_failures"
     assert evidence["audit"]["schema_validation"]["failure_count"] == 0
@@ -220,6 +221,7 @@ def test_testnet_evidence_contract_rejects_extra_keys_and_live_flags(tmp_path):
     evidence["audit"]["schema_validation"]["status"] = "pass"
     evidence["audit"]["schema_validation"]["failures"] = ["unexpected"]
     evidence["audit"]["content_sha256"] = "not-a-hash"
+    evidence["audit"]["dirty_worktree"] = "yes"
 
     failures = evidence_contract_failures(evidence)
 
@@ -232,6 +234,7 @@ def test_testnet_evidence_contract_rejects_extra_keys_and_live_flags(tmp_path):
     assert "invalid_audit_profile_key" in failures
     assert "invalid_audit_schema_validation_pass_mismatch" in failures
     assert "invalid_audit_content_sha256" in failures
+    assert "invalid_audit_dirty_worktree" in failures
 
 
 def test_testnet_evidence_contract_requires_audit_integrity_fields(tmp_path):

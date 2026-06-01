@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git ls-files | grep -E '(^|/)(\.env$|.*\.(pem|key|sqlite3|db)$|data/|artifacts/)'; then
+          if git ls-files | grep -E '(^|/)(\.env$|\.env\..+|\.envrc$|\.npmrc$|\.pypirc$|\.netrc$|id_(rsa|dsa|ecdsa|ed25519)$|terraform\.tfvars$|.*\.tfstate$|credentials\.json$|service-account.*\.json$|.*\.(pem|key|p8|p12|pfx|jks|sqlite3|db)$|data/|artifacts/)' | grep -Ev '(^|/)\.env(\.testnet)?\.example$'; then
             echo "Tracked runtime secret, database, data, or artifact file found."
             exit 1
           fi
