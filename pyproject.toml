@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2.7,<3",
-  "requests>=2.32,<3",
+  "requests[socks]>=2.32,<3",
 ]
 
 [project.optional-dependencies]
