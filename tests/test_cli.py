@@ -578,6 +578,71 @@ def test_launch_checklist_cli_uses_relaxed_config(monkeypatch, capsys, tmp_path)
     assert output == {"status": "blocked", "db_path": str(tmp_path / "test.sqlite3"), "target_mode": "live"}
 
 
+def test_launch_checklist_writes_testnet_evidence(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(tmp_path / "test.sqlite3"),
+        interval="4h",
+        binance_api_key="api-key-value",
+        binance_api_secret="secret-value",
+    )
+    evidence_path = tmp_path / "artifacts" / "checklist.json"
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(
+        cli,
+        "run_launch_checklist",
+        lambda received_config, target_mode=None: {
+            "status": "pass",
+            "target_mode": target_mode,
+            "phase": "testnet_observed_ready_for_live_review",
+            "api_secret": "secret-value",
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["kxian-bot", "launch-checklist", "--target", "testnet", "--evidence-out", str(evidence_path)],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    saved_text = evidence_path.read_text(encoding="utf-8")
+    saved = json.loads(saved_text)
+    assert output["status"] == "pass"
+    assert saved["launch_checklist"]["phase"] == "testnet_observed_ready_for_live_review"
+    assert saved["launch_checklist"]["api_secret"] == "<redacted>"
+    assert "secret-value" not in saved_text
+
+
+def test_launch_checklist_rejects_live_target_evidence_out(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(mode="testnet", db_path=str(tmp_path / "test.sqlite3"), interval="4h")
+    evidence_path = tmp_path / "artifacts" / "live.json"
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(
+        cli,
+        "run_launch_checklist",
+        lambda received_config, target_mode=None: (_ for _ in ()).throw(AssertionError("live evidence-out must stop before checklist")),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["kxian-bot", "launch-checklist", "--target", "live", "--evidence-out", str(evidence_path)],
+    )
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected live target evidence-out to be rejected")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "blocked"
+    assert output["reason"] == "testnet_evidence_requires_testnet_target"
+    assert not evidence_path.exists()
+
+
 def test_testnet_setup_check_cli_uses_relaxed_config_and_redacts_credentials(monkeypatch, capsys, tmp_path):
     config = RuntimeConfig(
         mode="testnet",
@@ -837,6 +902,41 @@ def test_testnet_dry_run_runs_checks_and_fill_sync_without_loop(monkeypatch, cap
     assert received["sleep_seconds"] == 0.0
 
 
+def test_testnet_dry_run_writes_redacted_evidence(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(tmp_path / "test.sqlite3"),
+        interval="4h",
+        binance_api_key="api-key-value",
+        binance_api_secret="secret-value",
+    )
+    evidence_path = tmp_path / "artifacts" / "dry-run.json"
+
+    def fake_run_testnet_dry_run(received_config, sync_limit, execute_loop, sleep_seconds):
+        return {
+            "status": "pass",
+            "mode": received_config.mode,
+            "credentials": {"present": {"binance_api_key": True, "binance_api_secret": True}},
+            "api_key": "api-key-value",
+            "secret": "secret-value",
+        }
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "run_testnet_dry_run", fake_run_testnet_dry_run)
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "testnet-dry-run", "--evidence-out", str(evidence_path)])
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    saved_text = evidence_path.read_text(encoding="utf-8")
+    saved = json.loads(saved_text)
+    assert output["api_key"] == "api-key-value"
+    assert saved["result"]["api_key"] == "<redacted>"
+    assert saved["credentials"]["present"]["binance_api_key"] is True
+    assert "api-key-value" not in saved_text
+    assert "secret-value" not in saved_text
+
+
 def test_testnet_dry_run_execute_loop_runs_one_iteration(monkeypatch, capsys, tmp_path):
     config = RuntimeConfig(
         mode="testnet",
@@ -971,6 +1071,33 @@ def test_testnet_observe_cli_defaults_to_six_cycles(monkeypatch, capsys, tmp_pat
     }
 
 
+def test_testnet_observe_writes_evidence(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(mode="testnet", db_path=str(tmp_path / "test.sqlite3"), interval="4h")
+    evidence_path = tmp_path / "artifacts" / "observe.json"
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(
+        cli,
+        "run_testnet_observation",
+        lambda received_config, cycles, sync_limit, execute_loop, sleep_seconds, continue_on_failure: {
+            "status": "pass",
+            "mode": "testnet",
+            "cycles_completed": cycles,
+            "failures": 0,
+            "order_lifecycle": {"state": "healthy_idle", "acceptable": True, "open_order_count": 0},
+        },
+    )
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "testnet-observe", "--cycles", "6", "--sleep-seconds", "0", "--evidence-out", str(evidence_path)])
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    saved = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert output["status"] == "pass"
+    assert saved["result"]["cycles_completed"] == 6
+    assert saved["result"]["order_lifecycle"]["state"] == "healthy_idle"
+
+
 def test_testnet_observe_cli_exits_on_failed_observation(monkeypatch, capsys, tmp_path):
     config = RuntimeConfig(mode="testnet", db_path=str(tmp_path / "test.sqlite3"))
     monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
@@ -996,6 +1123,65 @@ def test_testnet_observe_cli_exits_on_failed_observation(monkeypatch, capsys, tm
     assert output["status"] == "fail"
     assert output["reason"] == "missing_exchange_credentials"
     assert output["cycles_completed"] == 1
+
+
+def test_testnet_close_loop_defaults_to_safe_confirmation_stop(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(mode="testnet", db_path=str(tmp_path / "test.sqlite3"), interval="4h")
+    received = {}
+
+    def fake_close_loop(received_config, cycles, sync_limit, sleep_seconds, confirm_bounded_testnet_order, evidence_dir, timeout_seconds):
+        received.update(
+            {
+                "cycles": cycles,
+                "sync_limit": sync_limit,
+                "sleep_seconds": sleep_seconds,
+                "confirm_bounded_testnet_order": confirm_bounded_testnet_order,
+                "evidence_dir": evidence_dir,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return {"status": "blocked", "reason": "bounded_testnet_confirmation_required"}
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "run_testnet_close_loop", fake_close_loop)
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "testnet-close-loop", "--sleep-seconds", "0"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected confirmation-required close loop to exit")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason"] == "bounded_testnet_confirmation_required"
+    assert received["confirm_bounded_testnet_order"] is False
+    assert received["cycles"] == 6
+    assert received["sleep_seconds"] == 0.0
+
+
+def test_testnet_close_loop_passes_bounded_confirmation(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(mode="testnet", db_path=str(tmp_path / "test.sqlite3"), interval="4h")
+    received = {}
+
+    def fake_close_loop(received_config, cycles, sync_limit, sleep_seconds, confirm_bounded_testnet_order, evidence_dir, timeout_seconds):
+        received["confirm_bounded_testnet_order"] = confirm_bounded_testnet_order
+        received["evidence_dir"] = evidence_dir
+        return {"status": "pass", "reason": "testnet_close_loop_complete"}
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "run_testnet_close_loop", fake_close_loop)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["kxian-bot", "testnet-close-loop", "--confirm-bounded-testnet-order", "--evidence-dir", str(tmp_path / "artifacts")],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "pass"
+    assert received["confirm_bounded_testnet_order"] is True
+    assert received["evidence_dir"] == str(tmp_path / "artifacts")
 
 
 def test_paper_dry_run_cli_uses_relaxed_config_and_forces_sqlite_paper(monkeypatch, capsys, tmp_path):

@@ -458,6 +458,51 @@ def test_dashboard_testnet_observe_defaults_to_six_cycles(monkeypatch, tmp_path)
     assert received == {"cycles": 6, "sync_limit": 500, "sleep_seconds": 0.0}
 
 
+def test_dashboard_testnet_evidence_api_is_fixed_scope_and_redacted(monkeypatch, tmp_path):
+    def fake_launch_checklist(config, storage, target_mode=None):
+        assert target_mode == "testnet"
+        return {
+            "status": "pass",
+            "target_mode": target_mode,
+            "phase": "testnet_observed_ready_for_live_review",
+            "api_secret": "secret-value",
+        }
+
+    monkeypatch.setattr("kxian_bot.dashboard.run_launch_checklist", fake_launch_checklist)
+    monkeypatch.setattr(
+        "kxian_bot.dashboard.run_testnet_dry_run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("evidence API must not run dry-run")),
+    )
+    monkeypatch.setattr(
+        "kxian_bot.dashboard.run_testnet_observation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("evidence API must not run observation")),
+    )
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    handler = _build_handler(
+        storage,
+        RuntimeConfig(
+            db_path=str(tmp_path / "kxian.sqlite3"),
+            mode="paper",
+            exchange="okx",
+            symbol="ETHUSDT",
+            interval="1m",
+            binance_api_key="api-key-value",
+            binance_api_secret="secret-value",
+        ),
+    )
+
+    result = _call_json(handler, "/api/testnet-evidence")
+    raw = json.dumps(result)
+
+    assert result["scope"]["mode"] == "testnet"
+    assert result["scope"]["exchange"] == "binance"
+    assert result["scope"]["symbol"] == "BTCUSDT"
+    assert result["scope"]["interval"] == "4h"
+    assert result["launch_checklist"]["api_secret"] == "<redacted>"
+    assert "api-key-value" not in raw
+    assert "secret-value" not in raw
+
+
 def test_dashboard_api_uses_latest_contiguous_candle_window(tmp_path):
     storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
     storage.upsert_candles(
@@ -517,6 +562,10 @@ def test_dashboard_template_exposes_preflight_startup_gate():
     assert 'id="launchSteps"' in OPS_DASHBOARD_HTML
     assert "function renderLaunchChecklist" in OPS_DASHBOARD_HTML
     assert "function refreshLaunchChecklist" in OPS_DASHBOARD_HTML
+    assert "/api/testnet-evidence" in OPS_DASHBOARD_HTML
+    assert 'id="testnetAcceptanceTimeline" aria-live="polite"' in OPS_DASHBOARD_HTML
+    assert 'id="testnetEvidenceButton"' in OPS_DASHBOARD_HTML
+    assert "function renderTestnetAcceptanceTimeline" in OPS_DASHBOARD_HTML
 
 
 def test_dashboard_template_exposes_language_switch():
@@ -605,6 +654,7 @@ def test_dashboard_template_has_unified_button_feedback_and_testnet_result_state
     assert 'withButtonFeedback($("pauseButton")' in OPS_DASHBOARD_HTML
     assert 'withButtonFeedback($("dryRunButton")' in OPS_DASHBOARD_HTML
     assert 'withButtonFeedback($("observeButton")' in OPS_DASHBOARD_HTML
+    assert 'withButtonFeedback($("testnetEvidenceButton")' in OPS_DASHBOARD_HTML
     assert 'withButtonFeedback($("exportButton")' in OPS_DASHBOARD_HTML
     assert 'withButtonFeedback(button' in OPS_DASHBOARD_HTML
     assert 'row.addEventListener("click", () => withButtonFeedback(row' in OPS_DASHBOARD_HTML
@@ -617,6 +667,12 @@ def test_dashboard_template_has_unified_button_feedback_and_testnet_result_state
     assert 'restoreText: false' in OPS_DASHBOARD_HTML
     assert 'dryRunEl.textContent = state.dryRun ? dryRunLabel(state.dryRun)' in OPS_DASHBOARD_HTML
     assert 'renderObservationSummary(state.observation)' in OPS_DASHBOARD_HTML
+    assert 'renderTestnetAcceptanceTimeline();' in OPS_DASHBOARD_HTML
+    assert 'downloadJson("kxian-testnet-evidence.json", data)' in OPS_DASHBOARD_HTML
+    assert "function checkStepMeta" in OPS_DASHBOARD_HTML
+    assert "function checklistStepMeta" in OPS_DASHBOARD_HTML
+    assert "observation.latest_reason || latestObservationReason(observation)" in OPS_DASHBOARD_HTML
+    assert "clear open sandbox orders with order-status" in OPS_DASHBOARD_HTML
     assert 'if (!succeeded || options.restoreText !== false) button.textContent = originalText' in OPS_DASHBOARD_HTML
     assert 'document.querySelectorAll(".rail-btn").forEach' in OPS_DASHBOARD_HTML
 

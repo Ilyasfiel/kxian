@@ -510,7 +510,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
     }
     .testnet-actions {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
       margin-top: 10px;
     }
@@ -529,6 +529,45 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
     }
     .next-steps span {
       min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .acceptance-timeline {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+      max-height: 150px;
+      overflow: auto;
+    }
+    .timeline-step {
+      display: grid;
+      grid-template-columns: 16px minmax(0, 1fr) auto;
+      gap: 7px;
+      align-items: center;
+      min-height: 28px;
+      font-size: 11px;
+      color: var(--soft);
+    }
+    .timeline-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--muted);
+      justify-self: center;
+    }
+    .timeline-dot.pass { background: var(--green); }
+    .timeline-dot.fail { background: var(--red); }
+    .timeline-dot.blocked { background: var(--amber); }
+    .timeline-title {
+      min-width: 0;
+      font-family: var(--mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .timeline-meta {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 10px;
       overflow-wrap: anywhere;
     }
     .actions {
@@ -739,9 +778,11 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         <div class="kv"><span data-i18n="observeReason">失败原因</span><b id="observeReasonStatus">-</b></div>
         <div class="kv"><span data-i18n="orderLifecycle">订单闭环</span><b id="orderLifecycleStatus" class="warn-text">-</b></div>
         <div class="next-steps" id="testnetNextSteps"></div>
+        <div class="acceptance-timeline" id="testnetAcceptanceTimeline" aria-live="polite"></div>
         <div class="testnet-actions">
           <button class="primary" id="dryRunButton" data-i18n="runTestnetDryRun">测试网 Dry-run</button>
           <button id="observeButton" data-i18n="runTestnetObserve">观察 6 轮</button>
+          <button id="testnetEvidenceButton" data-i18n="downloadTestnetEvidence">下载证据</button>
         </div>
       </section>
       <section class="inspect-section">
@@ -877,9 +918,22 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         lastDryRun: "最近 Dry-run",
         runTestnetDryRun: "测试网 Dry-run",
         runTestnetObserve: "观察 6 轮",
+        downloadTestnetEvidence: "下载证据",
         observeCycles: "观察周期",
         observeReason: "失败原因",
         orderLifecycle: "订单闭环",
+        evidenceStarted: "正在生成测试网证据包",
+        evidencePassed: "测试网证据包已下载",
+        evidenceFailed: "测试网证据包导出失败",
+        timelineProfile: "Profile",
+        timelineSetup: "Setup",
+        timelineNonOrder: "非下单观察",
+        timelineBounded: "Bounded 观察",
+        timelineCleanup: "订单清理",
+        timelineFinal: "最终 checklist",
+        pendingShort: "待处理",
+        blockedShort: "阻断",
+        currentShort: "进行中",
         exchangeHealth: "交易所连通性",
         publicMarketData: "公开行情",
         tradingEndpoint: "交易端点",
@@ -1195,6 +1249,9 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         submitted: "已提交",
         idle: "空闲",
         rejected: "已拒绝",
+        fail: "失败",
+        pass: "通过",
+        pending: "待处理",
         eventSignal: "{symbol} {side}，原因：{reason}",
         eventFill: "{symbol} {side} 数量 {quantity} @ {price}",
         eventRisk: "风险快照：{day}，今日交易 {trades} 次",
@@ -1295,9 +1352,22 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         lastDryRun: "Latest Dry-run",
         runTestnetDryRun: "Run Testnet Dry-run",
         runTestnetObserve: "Observe 6 Cycles",
+        downloadTestnetEvidence: "Download Evidence",
         observeCycles: "Observation Cycles",
         observeReason: "Failure Reason",
         orderLifecycle: "Order Lifecycle",
+        evidenceStarted: "Preparing testnet evidence package",
+        evidencePassed: "Testnet evidence package downloaded",
+        evidenceFailed: "Testnet evidence export failed",
+        timelineProfile: "Profile",
+        timelineSetup: "Setup",
+        timelineNonOrder: "Non-order observe",
+        timelineBounded: "Bounded observe",
+        timelineCleanup: "Order cleanup",
+        timelineFinal: "Final checklist",
+        pendingShort: "Pending",
+        blockedShort: "Blocked",
+        currentShort: "Current",
         exchangeHealth: "Exchange Health",
         publicMarketData: "Public Market Data",
         tradingEndpoint: "Trading Endpoint",
@@ -1613,6 +1683,9 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         submitted: "SUBMITTED",
         idle: "IDLE",
         rejected: "REJECTED",
+        fail: "FAILED",
+        pass: "PASSED",
+        pending: "PENDING",
         eventSignal: "{symbol} {side} because {reason}",
         eventFill: "{symbol} {side} qty {quantity} @ {price}",
         eventRisk: "Risk snapshot day {day} trades {trades}",
@@ -1848,6 +1921,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       renderReadiness();
       renderExchangeHealth();
       renderLaunchChecklist();
+      renderTestnetAcceptanceTimeline();
       updateAutomationControl();
       updateChartTitle();
       if (state.candles) updateCandleLabels();
@@ -1923,6 +1997,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       renderReadiness();
       renderExchangeHealth();
       renderLaunchChecklist();
+      renderTestnetAcceptanceTimeline();
       updateAutomationControl();
       await loadCandles();
       if (state.selectedRun) await loadTrades(state.selectedRun.run_id);
@@ -2174,6 +2249,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       state.launchLive = launchLive;
       renderExchangeHealth();
       renderLaunchChecklist();
+      renderTestnetAcceptanceTimeline();
     }
 
     function refreshLaunchChecklistInBackground() {
@@ -2217,6 +2293,85 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       stepsEl.innerHTML = steps.slice(0, 3)
         .map((step) => `<span>${escapeHtml(stepLabel(step))}</span>`)
         .join("");
+    }
+
+    function renderTestnetAcceptanceTimeline() {
+      const el = $("testnetAcceptanceTimeline");
+      if (!el) return;
+      const checklist = state.launchTestnet || {};
+      const observations = checklist.testnet_observation || {};
+      const nonOrder = observations.non_ordering || state.observation || null;
+      const bounded = observations.bounded_order || null;
+      const checks = checklist.checks || [];
+      const profileCheck = checks.find((check) => check.name === "testnet_profile") || {};
+      const setupCheck = checks.find((check) => check.name === "testnet_closed_loop_scope") || {};
+      const cleanupCheck = checks.find((check) => check.name === "testnet_order_cleanup") || {};
+      const steps = [
+        acceptanceStep(t("timelineProfile"), profileCheck.status, checkStepMeta(profileCheck, checklist)),
+        acceptanceStep(t("timelineSetup"), setupCheck.status, checkStepMeta(setupCheck, checklist)),
+        acceptanceStep(t("timelineNonOrder"), observationStepStatus(nonOrder), observationStepMeta(nonOrder)),
+        acceptanceStep(t("timelineBounded"), observationStepStatus(bounded), observationStepMeta(bounded)),
+        acceptanceStep(t("timelineCleanup"), cleanupCheck.status, checkStepMeta(cleanupCheck, checklist)),
+        acceptanceStep(t("timelineFinal"), checklist.status, checklistStepMeta(checklist))
+      ];
+      el.innerHTML = steps.map((step) => `
+        <div class="timeline-step">
+          <span class="timeline-dot ${escapeHtml(step.className)}"></span>
+          <span>
+            <span class="timeline-title">${escapeHtml(step.title)}</span>
+            <span class="timeline-meta">${escapeHtml(messageLabel(step.meta || step.status || "pending"))}</span>
+          </span>
+          <span class="chip ${step.className === "pass" ? "green" : step.className === "fail" ? "red" : "yellow"}">${escapeHtml(step.label)}</span>
+        </div>
+      `).join("");
+    }
+
+    function acceptanceStep(title, status, meta) {
+      const normalized = status === "pass" ? "pass" : status === "fail" ? "fail" : status === "blocked" ? "blocked" : "pending";
+      return {
+        title,
+        status: normalized,
+        className: normalized,
+        label: normalized === "pass" ? t("passedShort") : normalized === "fail" ? t("failedShort") : normalized === "blocked" ? t("blockedShort") : t("pendingShort"),
+        meta: meta || normalized
+      };
+    }
+
+    function observationStepStatus(observation) {
+      if (!observation) return "pending";
+      return observation.status === "pass" ? "pass" : "fail";
+    }
+
+    function observationStepMeta(observation) {
+      if (!observation) return t("pendingShort");
+      const cycles = Number(observation.cycles_completed || 0);
+      const failures = Number(observation.failures || 0);
+      const lifecycle = observation.order_lifecycle || null;
+      const lifecycleText = lifecycle ? lifecycleLabel(lifecycle) : "-";
+      const reason = observation.latest_reason || latestObservationReason(observation);
+      const cleanup = lifecycle && Number(lifecycle.open_order_count || 0) > 0 ? stepLabel("clear open sandbox orders with order-status, cancel-order if needed, sync-fills, then rerun preflight") : "";
+      return [reason, `${cycles} ${t("observeCycles")} / ${t("failedShort")} ${failures}`, lifecycleText, cleanup]
+        .filter(Boolean)
+        .map((item) => messageLabel(item))
+        .join(" / ");
+    }
+
+    function checkStepMeta(check, checklist) {
+      if (!check || !check.status) return t("pendingShort");
+      const failures = check.details?.failures || check.details?.failed_checks || [];
+      const failureText = Array.isArray(failures) && failures.length ? failures.map((item) => messageLabel(item)).join(", ") : "";
+      return [check.message, failureText, (checklist?.next_steps || [])[0]]
+        .filter(Boolean)
+        .map((item) => stepLabel(item))
+        .join(" / ");
+    }
+
+    function checklistStepMeta(checklist) {
+      if (!checklist) return t("pendingShort");
+      return [checklist.phase || checklist.reason, (checklist.next_steps || [])[0]]
+        .filter(Boolean)
+        .map((item) => stepLabel(item))
+        .join(" / ");
     }
 
     function launchStatusClass(checklist) {
@@ -2660,6 +2815,15 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       }
     }
 
+    function downloadJson(fileName, payload) {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
     $("reloadButton").addEventListener("click", () => withButtonFeedback($("reloadButton"), {
       loadingText: t("reloadStarted"),
       successText: t("reloadPassed"),
@@ -2736,6 +2900,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         if (data.preflight) state.preflight = data.preflight;
         renderPreflight();
         renderReadiness();
+        renderTestnetAcceptanceTimeline();
         refreshLaunchChecklistInBackground();
         return data;
     }));
@@ -2759,6 +2924,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         if (last.result?.preflight) state.preflight = last.result.preflight;
         renderPreflight();
         renderReadiness();
+        renderTestnetAcceptanceTimeline();
         refreshLaunchChecklistInBackground();
         fetchJson("/api/ops").then((ops) => {
           state.ops = ops;
@@ -2768,17 +2934,27 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         });
         return data;
     }));
+    $("testnetEvidenceButton").addEventListener("click", () => withButtonFeedback($("testnetEvidenceButton"), {
+      loadingText: t("evidenceStarted"),
+      successText: t("evidencePassed"),
+      failureText: t("evidenceFailed")
+    }, async () => {
+      const data = await fetchJson("/api/testnet-evidence");
+      state.testnetEvidence = data;
+      if (data.launch_checklist) {
+        state.launchTestnet = data.launch_checklist;
+        renderLaunchChecklist();
+        renderTestnetAcceptanceTimeline();
+      }
+      downloadJson("kxian-testnet-evidence.json", data);
+      return data;
+    }));
     $("exportButton").addEventListener("click", () => withButtonFeedback($("exportButton"), {
       loadingText: t("exportStarted"),
       successText: t("exportPassed"),
       failureText: t("exportFailed")
     }, async () => {
-      const blob = new Blob([JSON.stringify(state.ops, null, 2)], { type: "application/json" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = "kxian-ops-dashboard.json";
-      link.click();
-      URL.revokeObjectURL(link.href);
+      downloadJson("kxian-ops-dashboard.json", state.ops);
     }));
     window.addEventListener("resize", () => drawChart(state.candles));
 

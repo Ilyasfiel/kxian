@@ -1632,6 +1632,11 @@ def _testnet_observation_summary(observation_id: str, events: list[dict[str, Any
         "latest_reason": latest_payload.get("reason", ""),
         "latest_message": latest.get("message", ""),
         "order_lifecycle": order_lifecycle if isinstance(order_lifecycle, dict) else None,
+        "profile": latest_payload.get("profile") if isinstance(latest_payload.get("profile"), dict) else None,
+        "account": latest_payload.get("account") if isinstance(latest_payload.get("account"), dict) else None,
+        "fill_sync": latest_payload.get("fill_sync") if isinstance(latest_payload.get("fill_sync"), dict) else None,
+        "preflight": latest_payload.get("preflight") if isinstance(latest_payload.get("preflight"), dict) else None,
+        "open_order_count": latest_payload.get("open_order_count"),
     }
 
 

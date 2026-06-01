@@ -271,9 +271,30 @@ def _record_observation_event(
                 "duration_seconds": cycle_result.get("duration_seconds"),
                 "execute_loop": bool(cycle_result.get("execute_loop", False)),
                 "order_lifecycle": cycle_result.get("result", {}).get("order_lifecycle"),
+                "profile": cycle_result.get("result", {}).get("profile"),
+                "account": _sync_summary(cycle_result.get("result", {}).get("account")),
+                "fill_sync": _sync_summary(cycle_result.get("result", {}).get("fill_sync")),
+                "preflight": _sync_summary(cycle_result.get("result", {}).get("preflight")),
+                "open_order_count": (
+                    cycle_result.get("result", {})
+                    .get("order_lifecycle", {})
+                    .get("open_order_count")
+                    if isinstance(cycle_result.get("result", {}).get("order_lifecycle"), dict)
+                    else None
+                ),
             },
         )
     )
+
+
+def _sync_summary(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    output: dict[str, Any] = {}
+    for key in ("status", "reason", "mode", "exchange", "symbol", "interval", "seen_fills", "imported_fills"):
+        if key in value:
+            output[key] = value.get(key)
+    return output
 
 
 def _latest_order_lifecycle(results: list[dict[str, Any]]) -> dict[str, Any] | None:

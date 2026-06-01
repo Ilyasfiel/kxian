@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from kxian_bot.config import RuntimeConfig
 from kxian_bot.dashboard_template import OPS_DASHBOARD_HTML
+from kxian_bot.evidence import build_testnet_evidence
 from kxian_bot.exchange_health import run_exchange_health_check
 from kxian_bot.launch_checklist import run_launch_checklist
 from kxian_bot.market_diagnostics import diagnose_market
@@ -64,6 +65,18 @@ def _build_handler(storage: SQLiteStorage, config: RuntimeConfig | None = None):
                 target = _first(params, "target", "testnet")
                 checklist_config = _testnet_config(config) if target == "testnet" else config
                 self._send_json(run_launch_checklist(checklist_config, storage, target_mode=target))
+                return
+            if parsed.path == "/api/testnet-evidence":
+                testnet_config = _testnet_config(config)
+                checklist = run_launch_checklist(testnet_config, storage, target_mode="testnet")
+                self._send_json(
+                    build_testnet_evidence(
+                        testnet_config,
+                        storage,
+                        command="dashboard-testnet-evidence",
+                        launch_checklist=checklist,
+                    )
+                )
                 return
             if parsed.path == "/api/candles":
                 params = parse_qs(parsed.query)

@@ -11,6 +11,7 @@ from pathlib import Path
 from kxian_bot.brokers.base import create_broker
 from kxian_bot.config import load_config
 from kxian_bot.dashboard import run_dashboard
+from kxian_bot.evidence import build_testnet_evidence, write_evidence
 from kxian_bot.exchange_health import run_exchange_health_check
 from kxian_bot.launch_checklist import run_launch_checklist
 from kxian_bot.market_data import MarketDataError
@@ -22,6 +23,7 @@ from kxian_bot.storage import SQLiteStorage
 from kxian_bot.strategy_parameters import strategy_parameters
 from kxian_bot.strategies.factory import SUPPORTED_STRATEGIES
 from kxian_bot.testnet_dry_run import run_testnet_dry_run, run_testnet_observation
+from kxian_bot.testnet_close_loop import run_testnet_close_loop
 from kxian_bot.testnet_setup import run_testnet_setup_check
 
 
@@ -36,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     health_parser.add_argument("--timeout-seconds", type=float, default=5.0)
     launch_parser = subparsers.add_parser("launch-checklist")
     launch_parser.add_argument("--target", choices=["testnet", "live"], default=None)
+    launch_parser.add_argument("--evidence-out", type=str, default=None)
     setup_parser = subparsers.add_parser("testnet-setup-check")
     setup_parser.add_argument("--timeout-seconds", type=float, default=5.0)
     pause_parser = subparsers.add_parser("pause")
@@ -411,6 +414,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="After checks and fill sync pass, run one bounded testnet loop iteration.",
     )
     dry_run_parser.add_argument("--sleep-seconds", type=float, default=0.0)
+    dry_run_parser.add_argument("--evidence-out", type=str, default=None)
 
     observe_parser = subparsers.add_parser("testnet-observe")
     observe_parser.add_argument("--cycles", type=int, default=6)
@@ -425,6 +429,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--continue-on-failure",
         action="store_true",
         help="Keep observing after failed cycles instead of stopping on the first failure.",
+    )
+    observe_parser.add_argument("--evidence-out", type=str, default=None)
+
+    close_loop_parser = subparsers.add_parser("testnet-close-loop")
+    close_loop_parser.add_argument("--cycles", type=int, default=6)
+    close_loop_parser.add_argument("--sync-limit", type=int, default=500)
+    close_loop_parser.add_argument("--sleep-seconds", type=float, default=60.0)
+    close_loop_parser.add_argument("--timeout-seconds", type=float, default=5.0)
+    close_loop_parser.add_argument("--evidence-dir", type=str, default=None)
+    close_loop_parser.add_argument(
+        "--confirm-bounded-testnet-order",
+        action="store_true",
+        help="Allow the command to run bounded Binance Spot Testnet --execute-loop observation.",
     )
 
     paper_dry_run_parser = subparsers.add_parser("paper-dry-run")
@@ -448,6 +465,7 @@ def main() -> None:
         "promote-profile-to-testnet",
         "run-once",
         "strategy-profile",
+        "testnet-close-loop",
         "testnet-dry-run",
         "testnet-observe",
         "testnet-setup-check",
@@ -484,7 +502,29 @@ def main() -> None:
             return
 
         if args.command == "launch-checklist":
-            print(json.dumps(run_launch_checklist(config, target_mode=args.target), ensure_ascii=False))
+            target_for_evidence = args.target or (config.mode if config.mode in {"testnet", "live"} else "testnet")
+            if args.evidence_out and target_for_evidence != "testnet":
+                print(
+                    json.dumps(
+                        {
+                            "status": "blocked",
+                            "reason": "testnet_evidence_requires_testnet_target",
+                            "target_mode": target_for_evidence,
+                            "next_steps": ["rerun launch-checklist --target testnet --evidence-out <path>"],
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                raise SystemExit(2)
+            result = run_launch_checklist(config, target_mode=args.target)
+            _write_testnet_evidence_if_requested(
+                args.evidence_out,
+                config,
+                command="launch-checklist",
+                result=result,
+                launch_checklist=result if target_for_evidence == "testnet" else None,
+            )
+            print(json.dumps(result, ensure_ascii=False))
             return
 
         if args.command == "testnet-setup-check":
@@ -561,6 +601,12 @@ def main() -> None:
                 execute_loop=args.execute_loop,
                 sleep_seconds=args.sleep_seconds,
             )
+            _write_testnet_evidence_if_requested(
+                args.evidence_out,
+                config,
+                command="testnet-dry-run",
+                result=result,
+            )
             print(json.dumps(result, ensure_ascii=False))
             if result["status"] != "pass":
                 raise SystemExit(2)
@@ -574,6 +620,27 @@ def main() -> None:
                 execute_loop=args.execute_loop,
                 sleep_seconds=args.sleep_seconds,
                 continue_on_failure=args.continue_on_failure,
+            )
+            _write_testnet_evidence_if_requested(
+                args.evidence_out,
+                config,
+                command="testnet-observe",
+                result=result,
+            )
+            print(json.dumps(result, ensure_ascii=False))
+            if result["status"] != "pass":
+                raise SystemExit(2)
+            return
+
+        if args.command == "testnet-close-loop":
+            result = run_testnet_close_loop(
+                config,
+                cycles=args.cycles,
+                sync_limit=args.sync_limit,
+                sleep_seconds=args.sleep_seconds,
+                confirm_bounded_testnet_order=args.confirm_bounded_testnet_order,
+                evidence_dir=args.evidence_dir,
+                timeout_seconds=args.timeout_seconds,
             )
             print(json.dumps(result, ensure_ascii=False))
             if result["status"] != "pass":
@@ -1246,6 +1313,29 @@ def _walk_forward_samples_output(result: dict, summary_only: bool = False) -> di
 def _paper_dry_run_table_counts(storage: SQLiteStorage) -> dict[str, int]:
     tables = ("candles", "strategy_signals", "fills", "exchange_orders", "risk_state", "loop_events")
     return {table: len(storage.fetch_all(table)) for table in tables}
+
+
+def _write_testnet_evidence_if_requested(
+    evidence_out: str | None,
+    config,
+    *,
+    command: str,
+    result: dict,
+    launch_checklist: dict | None = None,
+) -> None:
+    if not evidence_out:
+        return
+    storage = SQLiteStorage(config.db_path)
+    write_evidence(
+        evidence_out,
+        build_testnet_evidence(
+            config,
+            storage,
+            command=command,
+            result=result,
+            launch_checklist=launch_checklist,
+        ),
+    )
 
 
 def parse_int_list(value: str) -> list[int]:

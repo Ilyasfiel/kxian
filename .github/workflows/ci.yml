@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      KXIAN_MODE: paper
+      KXIAN_MARKET_DATA_SOURCE: sqlite
+      KXIAN_ALLOW_LIVE: "false"
+      KXIAN_ENABLE_LIVE_AUTOTRADE: "false"
+      KXIAN_LIVE_DRY_RUN: "true"
+      KXIAN_ENABLE_TESTNET_AUTOTRADE: "false"
+      KXIAN_LIVE_CONFIRMATION: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Compile
+        run: python -m compileall src/kxian_bot
+      - name: Test
+        run: python -m pytest -v
+      - name: Offline smoke
+        run: kxian-bot paper-dry-run --input-file sample_data/ohlcv_smoke.csv --max-iterations 1 --sleep-seconds 0

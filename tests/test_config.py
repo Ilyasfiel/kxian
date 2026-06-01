@@ -1,4 +1,11 @@
+import pytest
+
 from kxian_bot.config import ConfigError, load_config
+
+
+@pytest.fixture(autouse=True)
+def isolate_dotenv(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
 
 
 def test_defaults_to_paper_mode(monkeypatch):
@@ -30,6 +37,16 @@ def test_defaults_to_paper_mode(monkeypatch):
     assert config.stop_loss_pct == 2.0
     assert config.take_profit_pct == 4.0
     assert config.trailing_stop_pct == 2.0
+
+
+def test_config_tests_ignore_outer_kxian_environment(monkeypatch):
+    monkeypatch.setenv("KXIAN_MODE", "paper")
+    monkeypatch.setenv("KXIAN_ENABLE_TESTNET_AUTOTRADE", "true")
+
+    config = load_config()
+
+    assert config.mode == "paper"
+    assert config.enable_testnet_autotrade is True
 
 
 def test_live_mode_requires_explicit_allow(monkeypatch):

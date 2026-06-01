@@ -114,10 +114,18 @@ def test_testnet_observation_execute_loop_uses_zero_inner_sleep(monkeypatch, tmp
 
 def test_testnet_observation_records_order_lifecycle(monkeypatch, tmp_path):
     lifecycle = {"state": "filled", "acceptable": True, "open_order_count": 0}
+    profile = {"profile_key": "testnet:binance:BTCUSDT:4h", "validation_run_ids": {"strategy_gate": "run-1"}}
     db_path = tmp_path / "kxian.sqlite3"
 
     def fake_dry_run(config, sync_limit, execute_loop, sleep_seconds):
-        return {"status": "pass", "order_lifecycle": lifecycle}
+        return {
+            "status": "pass",
+            "profile": profile,
+            "account": {"status": "synced", "asset_balance": 0.0},
+            "fill_sync": {"status": "synced", "seen_fills": 1, "imported_fills": 0},
+            "preflight": {"status": "pass"},
+            "order_lifecycle": lifecycle,
+        }
 
     monkeypatch.setattr(testnet_dry_run, "run_testnet_dry_run", fake_dry_run)
 
@@ -133,6 +141,15 @@ def test_testnet_observation_records_order_lifecycle(monkeypatch, tmp_path):
     assert result["order_lifecycle"] == lifecycle
     events = SQLiteStorage(db_path).list_loop_events()
     assert events[0]["payload"]["order_lifecycle"] == lifecycle
+    assert events[0]["payload"]["profile"] == profile
+    assert events[0]["payload"]["account"] == {"status": "synced"}
+    assert events[0]["payload"]["fill_sync"] == {"status": "synced", "seen_fills": 1, "imported_fills": 0}
+    assert events[0]["payload"]["preflight"] == {"status": "pass"}
+    assert events[0]["payload"]["open_order_count"] == 0
+    latest = SQLiteStorage(db_path).latest_testnet_observation("binance", "BTCUSDT", "1m", execute_loop=True)
+    assert latest["profile"] == profile
+    assert latest["fill_sync"]["status"] == "synced"
+    assert latest["open_order_count"] == 0
 
 
 def test_testnet_dry_run_rejects_out_of_scope_closed_loop_config(tmp_path):
