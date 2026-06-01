@@ -152,6 +152,9 @@ def test_dashboard_api_returns_overview_candles_runs_and_trades(monkeypatch, tmp
     assert {check["name"] for check in preflight["checks"]} >= {"automation_control", "market_data", "execution_mode"}
     readiness = _call_json(handler, "/api/readiness")
     assert readiness["mode"] == "testnet"
+    assert readiness["exchange"] == "binance"
+    assert readiness["symbol"] == "BTCUSDT"
+    assert readiness["interval"] == "4h"
     assert readiness["status"] == "fail"
     assert readiness["checks"][1]["name"] == "credentials"
     exchange_health = _call_json(handler, "/api/exchange-health?mode=testnet&timeout=1")
@@ -160,7 +163,7 @@ def test_dashboard_api_returns_overview_candles_runs_and_trades(monkeypatch, tmp
     checklist = _call_json(handler, "/api/launch-checklist?target=testnet")
     assert checklist["target_mode"] == "testnet"
     assert checklist["status"] == "blocked"
-    assert checklist["checks"][0]["name"] == "readiness"
+    assert checklist["checks"][0]["name"] == "testnet_closed_loop_scope"
     ops = _call_json(handler, "/api/ops")
     assert ops["loop_events"][0]["loop_id"] == "loop-1"
     assert ops["stress_runs"][0]["run_id"] == "stress-1"
@@ -198,6 +201,7 @@ def test_dashboard_testnet_dry_run_reports_missing_credentials(tmp_path):
             db_path=str(tmp_path / "kxian.sqlite3"),
             mode="paper",
             exchange="binance",
+            interval="4h",
             binance_api_key="",
             binance_api_secret="",
         ),
@@ -240,6 +244,71 @@ def test_dashboard_exchange_health_uses_requested_mode_and_timeout(monkeypatch, 
     }
 
 
+def test_dashboard_testnet_health_and_checklist_are_fixed_to_closed_loop_scope(monkeypatch, tmp_path):
+    received = {}
+
+    def fake_exchange_health(config, timeout_seconds=5.0):
+        received["health"] = {
+            "mode": config.mode,
+            "exchange": config.exchange,
+            "symbol": config.symbol,
+            "interval": config.interval,
+            "use_testnet": config.use_testnet,
+            "market_data_source": config.market_data_source,
+            "timeout_seconds": timeout_seconds,
+        }
+        return {"status": "pass", "mode": config.mode, "checks": []}
+
+    def fake_launch_checklist(config, storage, target_mode=None):
+        received["checklist"] = {
+            "mode": config.mode,
+            "exchange": config.exchange,
+            "symbol": config.symbol,
+            "interval": config.interval,
+            "use_testnet": config.use_testnet,
+            "market_data_source": config.market_data_source,
+            "target_mode": target_mode,
+        }
+        return {"status": "blocked", "target_mode": target_mode, "checks": []}
+
+    monkeypatch.setattr("kxian_bot.dashboard.run_exchange_health_check", fake_exchange_health)
+    monkeypatch.setattr("kxian_bot.dashboard.run_launch_checklist", fake_launch_checklist)
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    handler = _build_handler(
+        storage,
+        RuntimeConfig(
+            db_path=str(tmp_path / "kxian.sqlite3"),
+            mode="paper",
+            exchange="okx",
+            symbol="ETHUSDT",
+            interval="1m",
+        ),
+    )
+
+    assert _call_json(handler, "/api/exchange-health?mode=testnet&timeout=1")["status"] == "pass"
+    assert _call_json(handler, "/api/launch-checklist?target=testnet")["target_mode"] == "testnet"
+    assert received == {
+        "health": {
+            "mode": "testnet",
+            "exchange": "binance",
+            "symbol": "BTCUSDT",
+            "interval": "4h",
+            "use_testnet": True,
+            "market_data_source": "exchange",
+            "timeout_seconds": 1.0,
+        },
+        "checklist": {
+            "mode": "testnet",
+            "exchange": "binance",
+            "symbol": "BTCUSDT",
+            "interval": "4h",
+            "use_testnet": True,
+            "market_data_source": "exchange",
+            "target_mode": "testnet",
+        },
+    }
+
+
 def test_dashboard_testnet_dry_run_uses_sanitized_bounds(monkeypatch, tmp_path):
     received = {}
 
@@ -247,6 +316,10 @@ def test_dashboard_testnet_dry_run_uses_sanitized_bounds(monkeypatch, tmp_path):
         received.update(
             {
                 "mode": config.mode,
+                "exchange": config.exchange,
+                "symbol": config.symbol,
+                "interval": config.interval,
+                "use_testnet": config.use_testnet,
                 "market_data_source": config.market_data_source,
                 "sync_limit": sync_limit,
                 "execute_loop": execute_loop,
@@ -257,7 +330,17 @@ def test_dashboard_testnet_dry_run_uses_sanitized_bounds(monkeypatch, tmp_path):
 
     monkeypatch.setattr("kxian_bot.dashboard.run_testnet_dry_run", fake_run_testnet_dry_run)
     storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
-    handler = _build_handler(storage, RuntimeConfig(db_path=str(tmp_path / "kxian.sqlite3"), mode="paper", market_data_source="sqlite"))
+    handler = _build_handler(
+        storage,
+        RuntimeConfig(
+            db_path=str(tmp_path / "kxian.sqlite3"),
+            mode="paper",
+            exchange="okx",
+            symbol="ETHUSDT",
+            market_data_source="sqlite",
+            interval="1m",
+        ),
+    )
 
     result = _call_json(
         handler,
@@ -269,6 +352,10 @@ def test_dashboard_testnet_dry_run_uses_sanitized_bounds(monkeypatch, tmp_path):
     assert result["status"] == "pass"
     assert received == {
         "mode": "testnet",
+        "exchange": "binance",
+        "symbol": "BTCUSDT",
+        "interval": "4h",
+        "use_testnet": True,
         "market_data_source": "exchange",
         "sync_limit": 1000,
         "execute_loop": True,
@@ -290,6 +377,10 @@ def test_dashboard_testnet_observe_uses_sanitized_bounds(monkeypatch, tmp_path):
         received.update(
             {
                 "mode": config.mode,
+                "exchange": config.exchange,
+                "symbol": config.symbol,
+                "interval": config.interval,
+                "use_testnet": config.use_testnet,
                 "market_data_source": config.market_data_source,
                 "cycles": cycles,
                 "sync_limit": sync_limit,
@@ -302,7 +393,17 @@ def test_dashboard_testnet_observe_uses_sanitized_bounds(monkeypatch, tmp_path):
 
     monkeypatch.setattr("kxian_bot.dashboard.run_testnet_observation", fake_run_testnet_observation)
     storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
-    handler = _build_handler(storage, RuntimeConfig(db_path=str(tmp_path / "kxian.sqlite3"), mode="paper", market_data_source="sqlite"))
+    handler = _build_handler(
+        storage,
+        RuntimeConfig(
+            db_path=str(tmp_path / "kxian.sqlite3"),
+            mode="paper",
+            exchange="okx",
+            symbol="ETHUSDT",
+            market_data_source="sqlite",
+            interval="1m",
+        ),
+    )
 
     result = _call_json(
         handler,
@@ -320,6 +421,10 @@ def test_dashboard_testnet_observe_uses_sanitized_bounds(monkeypatch, tmp_path):
     assert result["status"] == "pass"
     assert received == {
         "mode": "testnet",
+        "exchange": "binance",
+        "symbol": "BTCUSDT",
+        "interval": "4h",
+        "use_testnet": True,
         "market_data_source": "exchange",
         "cycles": 24,
         "sync_limit": 1000,
@@ -327,6 +432,30 @@ def test_dashboard_testnet_observe_uses_sanitized_bounds(monkeypatch, tmp_path):
         "sleep_seconds": 5.0,
         "continue_on_failure": True,
     }
+
+
+def test_dashboard_testnet_observe_defaults_to_six_cycles(monkeypatch, tmp_path):
+    received = {}
+
+    def fake_run_testnet_observation(
+        config,
+        cycles,
+        sync_limit,
+        execute_loop,
+        sleep_seconds,
+        continue_on_failure,
+    ):
+        received.update({"cycles": cycles, "sync_limit": sync_limit, "sleep_seconds": sleep_seconds})
+        return {"status": "pass", "mode": config.mode, "cycles_completed": cycles}
+
+    monkeypatch.setattr("kxian_bot.dashboard.run_testnet_observation", fake_run_testnet_observation)
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    handler = _build_handler(storage, RuntimeConfig(db_path=str(tmp_path / "kxian.sqlite3")))
+
+    result = _call_json(handler, "/api/testnet-observe", method="POST", body={})
+
+    assert result["cycles_completed"] == 6
+    assert received == {"cycles": 6, "sync_limit": 500, "sleep_seconds": 0.0}
 
 
 def test_dashboard_api_uses_latest_contiguous_candle_window(tmp_path):
@@ -420,7 +549,9 @@ def test_dashboard_template_exposes_language_switch():
     assert "persistLanguage(urlLang);" in OPS_DASHBOARD_HTML
     assert "localStorage.getItem(LANGUAGE_STORAGE_KEY)" in OPS_DASHBOARD_HTML
     assert 'return "zh";' in OPS_DASHBOARD_HTML
-    assert ".language-control {\n      position: fixed;" in OPS_DASHBOARD_HTML
+    assert ".language-control {" in OPS_DASHBOARD_HTML
+    language_css = OPS_DASHBOARD_HTML.split(".language-control {", 1)[1].split("}", 1)[0]
+    assert "position: fixed;" not in language_css
     assert "updateChartTitle();" in OPS_DASHBOARD_HTML
     assert "function updateChartTitle(market)" in OPS_DASHBOARD_HTML
     assert 'String(target.exchange).toUpperCase()' in OPS_DASHBOARD_HTML
@@ -450,6 +581,44 @@ def test_dashboard_template_exposes_language_switch():
     assert 'promotedProfile' in OPS_DASHBOARD_HTML
     assert 'pnlShort' in OPS_DASHBOARD_HTML
     assert 'walkForwardShort' in OPS_DASHBOARD_HTML
+
+
+def test_dashboard_template_has_unified_button_feedback_and_testnet_result_state():
+    assert 'function withButtonFeedback' in OPS_DASHBOARD_HTML
+    assert 'button.disabled = true' in OPS_DASHBOARD_HTML
+    assert 'button.disabled = false' in OPS_DASHBOARD_HTML
+    assert 'button.setAttribute("aria-busy", "true")' in OPS_DASHBOARD_HTML
+    assert 'button.removeAttribute("aria-busy")' in OPS_DASHBOARD_HTML
+    assert "const minimumMs = Number(options.minimumMs ?? 220)" in OPS_DASHBOARD_HTML
+    assert 'role="status" aria-live="polite" aria-atomic="true"' in OPS_DASHBOARD_HTML
+    assert 'button:disabled' in OPS_DASHBOARD_HTML
+    assert 'id="settingsButton"' in OPS_DASHBOARD_HTML
+    assert 'id="observeCycleStatus"' in OPS_DASHBOARD_HTML
+    assert 'id="observeReasonStatus"' in OPS_DASHBOARD_HTML
+    assert 'id="orderLifecycleStatus"' in OPS_DASHBOARD_HTML
+    assert 'function renderObservationSummary' in OPS_DASHBOARD_HTML
+    assert 'function latestOrderLifecycle' in OPS_DASHBOARD_HTML
+    assert 'function refreshLaunchChecklistInBackground' in OPS_DASHBOARD_HTML
+    assert 'refreshLaunchChecklistInBackground();' in OPS_DASHBOARD_HTML
+    assert 'fetchJson("/api/ops").then((ops)' in OPS_DASHBOARD_HTML
+    assert 'withButtonFeedback($("reloadButton")' in OPS_DASHBOARD_HTML
+    assert 'withButtonFeedback($("pauseButton")' in OPS_DASHBOARD_HTML
+    assert 'withButtonFeedback($("dryRunButton")' in OPS_DASHBOARD_HTML
+    assert 'withButtonFeedback($("observeButton")' in OPS_DASHBOARD_HTML
+    assert 'withButtonFeedback($("exportButton")' in OPS_DASHBOARD_HTML
+    assert 'withButtonFeedback(button' in OPS_DASHBOARD_HTML
+    assert 'row.addEventListener("click", () => withButtonFeedback(row' in OPS_DASHBOARD_HTML
+    assert 'cycles: 6' in OPS_DASHBOARD_HTML
+    assert 'Observe 6 Cycles' in OPS_DASHBOARD_HTML
+    assert 'settingsUnavailable' in OPS_DASHBOARD_HTML
+    assert 'navUnavailable' in OPS_DASHBOARD_HTML
+    assert 'currentNav' in OPS_DASHBOARD_HTML
+    assert 'langAlreadyActive' in OPS_DASHBOARD_HTML
+    assert 'restoreText: false' in OPS_DASHBOARD_HTML
+    assert 'dryRunEl.textContent = state.dryRun ? dryRunLabel(state.dryRun)' in OPS_DASHBOARD_HTML
+    assert 'renderObservationSummary(state.observation)' in OPS_DASHBOARD_HTML
+    assert 'if (!succeeded || options.restoreText !== false) button.textContent = originalText' in OPS_DASHBOARD_HTML
+    assert 'document.querySelectorAll(".rail-btn").forEach' in OPS_DASHBOARD_HTML
 
 
 def test_dashboard_template_escapes_dynamic_html_fields():

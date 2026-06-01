@@ -87,6 +87,39 @@ def test_readiness_passes_for_ready_testnet_profile(tmp_path):
     ]
 
 
+def test_readiness_can_relax_testnet_autotrade_for_non_ordering_checks(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_candles(storage, count=12)
+    _record_backtest(storage)
+    _record_stress(storage)
+    _record_walk_forward(storage)
+    _record_profile(storage)
+    config = RuntimeConfig(
+        mode="testnet",
+        exchange="binance",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        short_window=3,
+        long_window=5,
+        min_order_usdt=1,
+        binance_api_key="key",
+        binance_api_secret="secret",
+        enable_testnet_autotrade=False,
+    )
+
+    relaxed = run_readiness(config, storage, require_testnet_autotrade=False)
+    strict = run_readiness(config, storage, require_testnet_autotrade=True)
+    strict_checks = {check["name"]: check for check in strict["checks"]}
+
+    assert relaxed["status"] == "pass"
+    assert relaxed["next_steps"] == [
+        "run kxian-bot testnet-dry-run and non-ordering testnet-observe; set KXIAN_ENABLE_TESTNET_AUTOTRADE=true before bounded --execute-loop"
+    ]
+    assert strict["status"] == "fail"
+    assert strict_checks["automation"]["details"]["failures"] == ["testnet_autotrade_disabled"]
+
+
 def test_readiness_profile_check_uses_active_strategy_profile(tmp_path):
     db_path = tmp_path / "kxian.sqlite3"
     storage = SQLiteStorage(db_path)

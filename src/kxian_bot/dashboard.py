@@ -51,7 +51,7 @@ def _build_handler(storage: SQLiteStorage, config: RuntimeConfig | None = None):
                 self._send_json(run_preflight(config, storage))
                 return
             if parsed.path == "/api/readiness":
-                self._send_json(run_readiness(_testnet_config(config), storage))
+                self._send_json(run_readiness(_testnet_config(config), storage, require_testnet_autotrade=False))
                 return
             if parsed.path == "/api/exchange-health":
                 params = parse_qs(parsed.query)
@@ -62,7 +62,8 @@ def _build_handler(storage: SQLiteStorage, config: RuntimeConfig | None = None):
             if parsed.path == "/api/launch-checklist":
                 params = parse_qs(parsed.query)
                 target = _first(params, "target", "testnet")
-                self._send_json(run_launch_checklist(config, storage, target_mode=target))
+                checklist_config = _testnet_config(config) if target == "testnet" else config
+                self._send_json(run_launch_checklist(checklist_config, storage, target_mode=target))
                 return
             if parsed.path == "/api/candles":
                 params = parse_qs(parsed.query)
@@ -169,7 +170,7 @@ def _testnet_dry_run_payload(config: RuntimeConfig, payload: dict) -> dict:
 
 
 def _testnet_observe_payload(config: RuntimeConfig, payload: dict) -> dict:
-    cycles = _bounded_int(payload.get("cycles", 3), default=3, minimum=1, maximum=24)
+    cycles = _bounded_int(payload.get("cycles", 6), default=6, minimum=1, maximum=24)
     sync_limit = _bounded_int(payload.get("sync_limit", 500), default=500, minimum=1, maximum=1000)
     execute_loop = bool(payload.get("execute_loop", False))
     sleep_seconds = _bounded_float(payload.get("sleep_seconds", 0.0), default=0.0, minimum=0.0, maximum=5.0)
@@ -185,12 +186,21 @@ def _testnet_observe_payload(config: RuntimeConfig, payload: dict) -> dict:
 
 
 def _testnet_config(config: RuntimeConfig) -> RuntimeConfig:
-    return config.model_copy(update={"mode": "testnet", "market_data_source": "exchange"})
+    return config.model_copy(
+        update={
+            "mode": "testnet",
+            "exchange": "binance",
+            "symbol": "BTCUSDT",
+            "interval": "4h",
+            "use_testnet": True,
+            "market_data_source": "exchange",
+        }
+    )
 
 
 def _mode_config(config: RuntimeConfig, mode: str) -> RuntimeConfig:
     if mode == "testnet":
-        return config.model_copy(update={"mode": "testnet", "market_data_source": "exchange", "use_testnet": True})
+        return _testnet_config(config)
     if mode == "live":
         return config.model_copy(update={"mode": "live", "market_data_source": "exchange", "use_testnet": False})
     return config

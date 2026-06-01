@@ -4,13 +4,15 @@ from kxian_bot.testnet_setup import run_testnet_setup_check
 
 def test_testnet_setup_check_reports_missing_credentials_without_secret_values(monkeypatch, tmp_path):
     config = RuntimeConfig(
-        mode="paper",
+        mode="testnet",
         db_path=str(tmp_path / "kxian.sqlite3"),
+        interval="4h",
+        enable_testnet_autotrade=True,
         binance_api_key="",
         binance_api_secret="",
     )
     monkeypatch.setattr("kxian_bot.testnet_setup.run_exchange_health_check", lambda config, timeout_seconds=5.0: {"status": "pass", "checks": [], "next_steps": []})
-    monkeypatch.setattr("kxian_bot.testnet_setup.run_readiness", lambda config: {"status": "fail", "checks": [], "next_steps": ["set sandbox API credentials for the selected exchange"]})
+    monkeypatch.setattr("kxian_bot.testnet_setup.run_readiness", lambda config, **kwargs: {"status": "fail", "checks": [], "next_steps": ["set sandbox API credentials for the selected exchange"]})
     monkeypatch.setattr("kxian_bot.testnet_setup.run_launch_checklist", lambda config, target_mode=None: {"status": "blocked", "reason": "testnet_launch_blocked", "phase": "blocked_before_testnet", "checks": [], "next_steps": ["set sandbox API credentials for the selected exchange"]})
 
     result = run_testnet_setup_check(config)
@@ -28,12 +30,13 @@ def test_testnet_setup_check_passes_and_points_to_dry_run(monkeypatch, tmp_path)
     config = RuntimeConfig(
         mode="testnet",
         db_path=str(tmp_path / "kxian.sqlite3"),
+        interval="4h",
         binance_api_key="api-key-value",
         binance_api_secret="super-secret-value",
         enable_testnet_autotrade=True,
     )
     monkeypatch.setattr("kxian_bot.testnet_setup.run_exchange_health_check", lambda config, timeout_seconds=5.0: {"status": "pass", "checks": [], "next_steps": []})
-    monkeypatch.setattr("kxian_bot.testnet_setup.run_readiness", lambda config: {"status": "pass", "checks": [], "next_steps": []})
+    monkeypatch.setattr("kxian_bot.testnet_setup.run_readiness", lambda config, **kwargs: {"status": "pass", "checks": [], "next_steps": []})
     monkeypatch.setattr("kxian_bot.testnet_setup.run_launch_checklist", lambda config, target_mode=None: {"status": "pass", "reason": "testnet_launch_ready", "phase": "ready_for_testnet_dry_run", "checks": [], "next_steps": []})
 
     result = run_testnet_setup_check(config)
@@ -50,6 +53,7 @@ def test_testnet_setup_check_includes_exchange_health_next_steps(monkeypatch, tm
     config = RuntimeConfig(
         mode="testnet",
         db_path=str(tmp_path / "kxian.sqlite3"),
+        interval="4h",
         binance_api_key="key",
         binance_api_secret="secret",
         enable_testnet_autotrade=True,
@@ -62,12 +66,12 @@ def test_testnet_setup_check_includes_exchange_health_next_steps(monkeypatch, tm
             "next_steps": ["configure a stable proxy or deploy the bot on a network with exchange API access"],
         },
     )
-    monkeypatch.setattr("kxian_bot.testnet_setup.run_readiness", lambda config: {"status": "pass", "checks": [], "next_steps": []})
+    monkeypatch.setattr("kxian_bot.testnet_setup.run_readiness", lambda config, **kwargs: {"status": "pass", "checks": [], "next_steps": []})
     monkeypatch.setattr("kxian_bot.testnet_setup.run_launch_checklist", lambda config, target_mode=None: {"status": "pass", "reason": "testnet_launch_ready", "phase": "ready_for_testnet_dry_run", "checks": [], "next_steps": []})
 
     result = run_testnet_setup_check(config)
 
     assert result["status"] == "fail"
-    assert result["checks"][2]["name"] == "exchange_health"
-    assert result["checks"][2]["details"]["failed_checks"] == ["public_market_data"]
+    checks = {check["name"]: check for check in result["checks"]}
+    assert checks["exchange_health"]["details"]["failed_checks"] == ["public_market_data"]
     assert "configure a stable proxy" in result["next_steps"][0]

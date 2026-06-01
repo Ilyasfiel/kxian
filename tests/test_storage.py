@@ -314,6 +314,22 @@ def test_storage_blocks_profile_promotion_to_live_without_testnet_source(tmp_pat
     assert result["reason"] == "unsupported_profile_promotion_path"
 
 
+def _record_testnet_profile(storage: SQLiteStorage) -> None:
+    storage.upsert_strategy_profile(
+        mode="testnet",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="moving_average_cross",
+        parameters={"short_window": 10, "long_window": 30},
+        evidence={
+            "sample_validation": {"status": "pass", "sample_count": 2, "passed_samples": 2, "failed_samples": 0},
+            "promotion": {"source_profile_key": "paper:binance:BTCUSDT:4h", "target_mode": "testnet"},
+        },
+        updated_by="testnet",
+    )
+
+
 def test_storage_promotes_testnet_profile_to_live_with_promotion_evidence(tmp_path):
     storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
     storage.upsert_strategy_profile(
@@ -413,6 +429,139 @@ def test_storage_blocks_live_promotion_without_passing_testnet_observations(tmp_
     assert missing_non_order["reason"] == "source_profile_missing_passing_testnet_observation"
     assert missing_order["status"] == "blocked"
     assert missing_order["reason"] == "source_profile_missing_passing_testnet_order_observation"
+    assert storage.active_strategy_profile("live", "binance", "BTCUSDT", "4h") is None
+
+
+def test_storage_blocks_live_promotion_when_testnet_observation_cycles_are_insufficient(tmp_path):
+    non_order_storage = SQLiteStorage(tmp_path / "non-order.sqlite3")
+    _record_testnet_profile(non_order_storage)
+    _record_testnet_observation(non_order_storage, execute_loop=False, cycles=5)
+    _record_testnet_observation(non_order_storage, execute_loop=True, cycles=6)
+
+    non_order_result = non_order_storage.promote_strategy_profile_to_mode(
+        source_mode="testnet",
+        target_mode="live",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+    )
+    order_storage = SQLiteStorage(tmp_path / "order.sqlite3")
+    _record_testnet_profile(order_storage)
+    _record_testnet_observation(order_storage, execute_loop=False, cycles=6)
+    _record_testnet_observation(order_storage, execute_loop=True, cycles=5)
+
+    order_result = order_storage.promote_strategy_profile_to_mode(
+        source_mode="testnet",
+        target_mode="live",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+    )
+
+    assert non_order_result["status"] == "blocked"
+    assert non_order_result["reason"] == "source_profile_missing_passing_testnet_observation"
+    assert non_order_result["testnet_observation"]["cycles_completed"] == 5
+    assert "insufficient_testnet_observation_cycles" in non_order_result["failures"]
+    assert order_result["status"] == "blocked"
+    assert order_result["reason"] == "source_profile_missing_passing_testnet_order_observation"
+    assert order_result["testnet_observation"]["cycles_completed"] == 5
+    assert "insufficient_testnet_observation_cycles" in order_result["failures"]
+    assert non_order_storage.active_strategy_profile("live", "binance", "BTCUSDT", "4h") is None
+    assert order_storage.active_strategy_profile("live", "binance", "BTCUSDT", "4h") is None
+
+
+def test_storage_blocks_live_promotion_when_bounded_observation_lacks_lifecycle(tmp_path):
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    storage.upsert_strategy_profile(
+        mode="testnet",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="moving_average_cross",
+        parameters={"short_window": 10, "long_window": 30},
+        evidence={
+            "sample_validation": {"status": "pass", "sample_count": 2, "passed_samples": 2, "failed_samples": 0},
+            "promotion": {"source_profile_key": "paper:binance:BTCUSDT:4h", "target_mode": "testnet"},
+        },
+        updated_by="testnet",
+    )
+    _record_testnet_observation(storage, execute_loop=False)
+    for cycle in range(1, 7):
+        storage.record_loop_event(
+            LoopEvent(
+                loop_id="observe-legacy-order",
+                iteration=cycle,
+                status="idle",
+                mode="testnet",
+                exchange="binance",
+                symbol="BTCUSDT",
+                interval="4h",
+                message="testnet_observe_passed",
+                payload={
+                    "kind": "testnet_observe",
+                    "observation_id": "legacy-order",
+                    "cycle": cycle,
+                    "status": "pass",
+                    "execute_loop": True,
+                },
+            )
+        )
+
+    result = storage.promote_strategy_profile_to_mode(
+        source_mode="testnet",
+        target_mode="live",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "source_profile_missing_passing_testnet_order_observation"
+    assert "missing_order_lifecycle" in result["failures"]
+
+
+def test_storage_blocks_live_promotion_when_bounded_observation_lifecycle_is_unacceptable(tmp_path):
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    _record_testnet_profile(storage)
+    _record_testnet_observation(storage, execute_loop=False)
+    for cycle in range(1, 7):
+        storage.record_loop_event(
+            LoopEvent(
+                loop_id="observe-open-order",
+                iteration=cycle,
+                status="idle",
+                mode="testnet",
+                exchange="binance",
+                symbol="BTCUSDT",
+                interval="4h",
+                message="testnet_observe_passed",
+                payload={
+                    "kind": "testnet_observe",
+                    "observation_id": "open-order",
+                    "cycle": cycle,
+                    "status": "pass",
+                    "execute_loop": True,
+                    "order_lifecycle": {
+                        "state": "open_orders",
+                        "acceptable": False,
+                        "open_order_count": 1,
+                    },
+                },
+            )
+        )
+
+    result = storage.promote_strategy_profile_to_mode(
+        source_mode="testnet",
+        target_mode="live",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "source_profile_missing_passing_testnet_order_observation"
+    assert "testnet_observation_order_lifecycle_not_acceptable" in result["failures"]
+    assert result["testnet_observation"]["order_lifecycle"]["state"] == "open_orders"
     assert storage.active_strategy_profile("live", "binance", "BTCUSDT", "4h") is None
 
 
@@ -807,25 +956,31 @@ def test_storage_loop_lock_heartbeat_release_and_stale_takeover(tmp_path):
     assert active["loop_id"] == "loop-2"
 
 
-def _record_testnet_observation(storage: SQLiteStorage, execute_loop: bool) -> None:
+def _record_testnet_observation(storage: SQLiteStorage, execute_loop: bool, cycles: int = 6) -> None:
     observation_id = "order" if execute_loop else "check"
-    storage.record_loop_event(
-        LoopEvent(
-            loop_id=f"observe-{observation_id}",
-            iteration=1,
-            status="idle",
-            mode="testnet",
-            exchange="binance",
-            symbol="BTCUSDT",
-            interval="4h",
-            message="testnet_observe_passed",
-            payload={
-                "kind": "testnet_observe",
-                "observation_id": observation_id,
-                "cycle": 1,
-                "status": "pass",
-                "reason": "",
-                "execute_loop": execute_loop,
-            },
+    for cycle in range(1, cycles + 1):
+        storage.record_loop_event(
+            LoopEvent(
+                loop_id=f"observe-{observation_id}",
+                iteration=cycle,
+                status="idle",
+                mode="testnet",
+                exchange="binance",
+                symbol="BTCUSDT",
+                interval="4h",
+                message="testnet_observe_passed",
+                payload={
+                    "kind": "testnet_observe",
+                    "observation_id": observation_id,
+                    "cycle": cycle,
+                    "status": "pass",
+                    "reason": "",
+                    "execute_loop": execute_loop,
+                    "order_lifecycle": {
+                        "state": "healthy_idle" if execute_loop else "not_attempted",
+                        "acceptable": True,
+                        "open_order_count": 0,
+                    },
+                },
+            )
         )
-    )

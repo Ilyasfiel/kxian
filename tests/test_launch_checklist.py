@@ -60,11 +60,102 @@ def test_launch_checklist_passes_testnet_and_points_to_observation(tmp_path):
 
     result = run_launch_checklist(config, storage, target_mode="testnet")
 
-    assert result["status"] == "pass"
+    assert result["status"] == "blocked"
     assert result["phase"] == "ready_for_testnet_dry_run"
-    assert result["checks"][0]["name"] == "readiness"
-    assert result["checks"][1]["name"] == "testnet_profile"
+    assert result["checks"][0]["name"] == "testnet_closed_loop_scope"
+    assert result["checks"][1]["name"] == "readiness"
+    assert result["checks"][2]["name"] == "testnet_profile"
+    assert result["checks"][3]["name"] == "testnet_bounded_autotrade"
+    assert result["checks"][3]["status"] == "pass"
+    assert result["checks"][4]["name"] == "testnet_observation"
+    assert result["checks"][5]["name"] == "testnet_order_observation"
     assert any("testnet-observe" in step for step in result["next_steps"])
+
+
+def test_launch_checklist_allows_early_testnet_review_with_autotrade_off(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_ready_evidence(storage, mode="testnet")
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        binance_api_key="key",
+        binance_api_secret="secret",
+        enable_testnet_autotrade=False,
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="testnet")
+    check_status = {check["name"]: check["status"] for check in result["checks"]}
+
+    assert result["status"] == "blocked"
+    assert result["phase"] == "ready_for_testnet_dry_run"
+    assert check_status["testnet_closed_loop_scope"] == "pass"
+    assert check_status["readiness"] == "pass"
+    assert check_status["testnet_bounded_autotrade"] == "fail"
+    assert any("KXIAN_ENABLE_TESTNET_AUTOTRADE=true" in step for step in result["next_steps"])
+
+
+def test_launch_checklist_does_not_mark_final_phase_when_autotrade_is_off(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_ready_evidence(storage, mode="testnet")
+    _record_observation(storage, execute_loop=False)
+    _record_observation(storage, execute_loop=True)
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        binance_api_key="key",
+        binance_api_secret="secret",
+        enable_testnet_autotrade=False,
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="testnet")
+    autotrade_check = next(check for check in result["checks"] if check["name"] == "testnet_bounded_autotrade")
+
+    assert result["status"] == "blocked"
+    assert result["phase"] == "ready_for_bounded_testnet_order_observation"
+    assert autotrade_check["details"]["failures"] == ["testnet_autotrade_disabled"]
+    assert not any("ready_for_live_review" in step for step in result["next_steps"])
+
+
+def test_launch_checklist_passes_final_testnet_review_after_both_observations(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_ready_evidence(storage, mode="testnet")
+    _record_observation(storage, execute_loop=False)
+    _record_observation(storage, execute_loop=True)
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        binance_api_key="key",
+        binance_api_secret="secret",
+        enable_testnet_autotrade=True,
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="testnet")
+
+    assert result["status"] == "pass"
+    assert result["phase"] == "testnet_observed_ready_for_live_review"
+    assert result["target_mode"] == "testnet"
+    assert result["testnet_observation"]["non_ordering"]["cycles_completed"] == 6
+    assert result["testnet_observation"]["bounded_order"]["cycles_completed"] == 6
+    assert all(check["status"] == "pass" for check in result["checks"])
+    assert any("do not promote to live" in step for step in result["next_steps"])
 
 
 def test_launch_checklist_blocks_live_until_both_testnet_observations_and_live_profile_exist(tmp_path):
@@ -137,6 +228,240 @@ def test_launch_checklist_passes_live_after_profile_and_observations_exist(tmp_p
     assert result["phase"] == "ready_for_bounded_live_loop"
     assert result["testnet_observation"]["bounded_order"]["execute_loop"] is True
     assert "KXIAN_LIVE_CONFIRMATION=LIVE:binance:BTCUSDT:4h" in result["next_steps"][0]
+
+
+def test_launch_checklist_does_not_complete_testnet_when_order_observation_has_open_orders(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_ready_evidence(storage, mode="testnet")
+    _record_observation(storage, execute_loop=False)
+    storage.record_loop_event(
+        LoopEvent(
+            loop_id="observe-open-order",
+            iteration=1,
+            status="idle",
+            mode="testnet",
+            exchange="binance",
+            symbol="BTCUSDT",
+            interval="4h",
+            message="testnet_observe_passed",
+            payload={
+                "kind": "testnet_observe",
+                "observation_id": "open-order",
+                "cycle": 1,
+                "status": "pass",
+                "reason": "",
+                "duration_seconds": 0.1,
+                "execute_loop": True,
+                "order_lifecycle": {
+                    "state": "open_orders",
+                    "acceptable": False,
+                    "open_order_count": 1,
+                },
+            },
+        )
+    )
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        binance_api_key="key",
+        binance_api_secret="secret",
+        enable_testnet_autotrade=True,
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="testnet")
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "testnet_launch_blocked"
+    assert result["phase"] == "ready_for_bounded_testnet_order_observation"
+    assert result["testnet_observation"]["bounded_order"]["status"] == "fail"
+    assert result["testnet_observation"]["bounded_order"]["order_lifecycle"]["state"] == "open_orders"
+    assert any("order-status" in step for step in result["next_steps"])
+    assert any("cancel-order" in step for step in result["next_steps"])
+    assert any("sync-fills" in step for step in result["next_steps"])
+    assert any("preflight" in step for step in result["next_steps"])
+
+
+def test_launch_checklist_requires_six_testnet_observation_cycles(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_ready_evidence(storage, mode="testnet")
+    _record_observation(storage, execute_loop=False, cycles=1)
+    _record_observation(storage, execute_loop=True, cycles=1)
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        binance_api_key="key",
+        binance_api_secret="secret",
+        enable_testnet_autotrade=True,
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="testnet")
+
+    assert result["status"] == "blocked"
+    assert result["phase"] == "ready_for_testnet_dry_run"
+    assert result["testnet_observation"]["non_ordering"]["cycles_completed"] == 1
+    assert any("testnet-observe --cycles 6" in step for step in result["next_steps"])
+
+
+def test_launch_checklist_requires_order_lifecycle_for_bounded_observation(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_ready_evidence(storage, mode="testnet")
+    _record_observation(storage, execute_loop=False, cycles=6)
+    for cycle in range(1, 7):
+        storage.record_loop_event(
+            LoopEvent(
+                loop_id="observe-legacy-order",
+                iteration=cycle,
+                status="idle",
+                mode="testnet",
+                exchange="binance",
+                symbol="BTCUSDT",
+                interval="4h",
+                message="testnet_observe_passed",
+                payload={
+                    "kind": "testnet_observe",
+                    "observation_id": "legacy-order",
+                    "cycle": cycle,
+                    "status": "pass",
+                    "reason": "",
+                    "duration_seconds": 0.1,
+                    "execute_loop": True,
+                },
+            )
+        )
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        binance_api_key="key",
+        binance_api_secret="secret",
+        enable_testnet_autotrade=True,
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="testnet")
+
+    assert result["status"] == "blocked"
+    assert result["phase"] == "ready_for_bounded_testnet_order_observation"
+    assert result["testnet_observation"]["bounded_order"]["status"] == "pass"
+    assert result["testnet_observation"]["bounded_order"]["order_lifecycle"] is None
+
+
+def test_launch_checklist_final_phase_requires_non_ordering_observation(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_ready_evidence(storage, mode="testnet")
+    _record_observation(storage, execute_loop=True, cycles=6)
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        binance_api_key="key",
+        binance_api_secret="secret",
+        enable_testnet_autotrade=True,
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="testnet")
+
+    assert result["status"] == "blocked"
+    assert result["phase"] == "ready_for_testnet_dry_run"
+    assert any("testnet-observe --cycles 6" in step for step in result["next_steps"])
+
+
+def test_launch_checklist_blocks_live_when_bounded_observation_lacks_lifecycle(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_ready_evidence(storage, mode="testnet")
+    _record_observation(storage, execute_loop=False, cycles=6)
+    for cycle in range(1, 7):
+        storage.record_loop_event(
+            LoopEvent(
+                loop_id="observe-legacy-order",
+                iteration=cycle,
+                status="idle",
+                mode="testnet",
+                exchange="binance",
+                symbol="BTCUSDT",
+                interval="4h",
+                message="testnet_observe_passed",
+                payload={
+                    "kind": "testnet_observe",
+                    "observation_id": "legacy-order",
+                    "cycle": cycle,
+                    "status": "pass",
+                    "reason": "",
+                    "duration_seconds": 0.1,
+                    "execute_loop": True,
+                },
+            )
+        )
+    config = RuntimeConfig(
+        mode="live",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        allow_live=True,
+        use_testnet=False,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:binance:BTCUSDT:4h",
+        binance_api_key="key",
+        binance_api_secret="secret",
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+    order_check = next(check for check in result["checks"] if check["name"] == "testnet_order_observation")
+
+    assert result["status"] == "blocked"
+    assert "missing_order_lifecycle" in order_check["details"]["failures"]
+
+
+def test_launch_checklist_blocks_out_of_scope_testnet_target(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(db_path),
+        exchange="okx",
+        symbol="ETHUSDT",
+        interval="1m",
+        okx_api_key="key",
+        okx_api_secret="secret",
+        okx_api_passphrase="pass",
+        enable_testnet_autotrade=True,
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="testnet")
+
+    assert result["status"] == "blocked"
+    scope_check = next(check for check in result["checks"] if check["name"] == "testnet_closed_loop_scope")
+    assert scope_check["details"]["failures"] == [
+        "binance_exchange_required",
+        "btcusdt_symbol_required",
+        "4h_interval_required",
+    ]
 
 
 def _record_ready_evidence(storage: SQLiteStorage, mode: str) -> None:
@@ -246,26 +571,32 @@ def _record_walk_forward(storage: SQLiteStorage) -> None:
     )
 
 
-def _record_observation(storage: SQLiteStorage, execute_loop: bool) -> None:
+def _record_observation(storage: SQLiteStorage, execute_loop: bool, cycles: int = 6) -> None:
     observation_id = "order" if execute_loop else "check"
-    storage.record_loop_event(
-        LoopEvent(
-            loop_id=f"observe-{observation_id}",
-            iteration=1,
-            status="idle",
-            mode="testnet",
-            exchange="binance",
-            symbol="BTCUSDT",
-            interval="4h",
-            message="testnet_observe_passed",
-            payload={
-                "kind": "testnet_observe",
-                "observation_id": observation_id,
-                "cycle": 1,
-                "status": "pass",
-                "reason": "",
-                "duration_seconds": 0.1,
-                "execute_loop": execute_loop,
-            },
+    for cycle in range(1, cycles + 1):
+        storage.record_loop_event(
+            LoopEvent(
+                loop_id=f"observe-{observation_id}",
+                iteration=cycle,
+                status="idle",
+                mode="testnet",
+                exchange="binance",
+                symbol="BTCUSDT",
+                interval="4h",
+                message="testnet_observe_passed",
+                payload={
+                    "kind": "testnet_observe",
+                    "observation_id": observation_id,
+                    "cycle": cycle,
+                    "status": "pass",
+                    "reason": "",
+                    "duration_seconds": 0.1,
+                    "execute_loop": execute_loop,
+                    "order_lifecycle": {
+                        "state": "healthy_idle" if execute_loop else "not_attempted",
+                        "acceptable": True,
+                        "open_order_count": 0,
+                    },
+                },
+            )
         )
-    )

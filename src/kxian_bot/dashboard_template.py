@@ -54,6 +54,15 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       cursor: pointer;
     }
     button:hover { border-color: var(--cyan); color: var(--text); }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.56;
+      filter: saturate(0.65);
+    }
+    button[aria-busy="true"] {
+      border-color: var(--cyan);
+      color: var(--text);
+    }
     button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
       outline: 2px solid var(--cyan);
       outline-offset: 2px;
@@ -75,10 +84,6 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       color: #ffb7b2;
     }
     .language-control {
-      position: fixed;
-      top: 12px;
-      right: 12px;
-      z-index: 50;
       height: 32px;
       display: inline-flex;
       align-items: center;
@@ -86,7 +91,6 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       padding: 0 6px 0 10px;
       border: 1px solid rgba(63, 177, 237, 0.52);
       background: rgba(8, 19, 27, 0.96);
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.36);
       white-space: nowrap;
     }
     .language-label {
@@ -593,7 +597,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         </div>
       </div>
       <button id="reloadButton" title="重新读取数据" data-i18n="reload" data-i18n-attr="title:reloadTitle">刷新</button>
-      <button title="设置" data-i18n="settings" data-i18n-attr="title:settings">设置</button>
+      <button id="settingsButton" title="设置" data-i18n="settings" data-i18n-attr="title:settings">设置</button>
     </header>
 
     <section class="strip" aria-label="组合健康状态" data-i18n-attr="aria-label:portfolioHealth">
@@ -731,10 +735,13 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         <div class="kv"><span data-i18n="credentialState">测试网密钥</span><b id="credentialStatus" class="warn-text">-</b></div>
         <div class="kv"><span data-i18n="automationFlag">自动交易开关</span><b id="testnetAutomationStatus" class="warn-text">-</b></div>
         <div class="kv"><span data-i18n="lastDryRun">最近 Dry-run</span><b id="dryRunStatus" class="warn-text">-</b></div>
+        <div class="kv"><span data-i18n="observeCycles">观察周期</span><b id="observeCycleStatus" class="warn-text">-</b></div>
+        <div class="kv"><span data-i18n="observeReason">失败原因</span><b id="observeReasonStatus">-</b></div>
+        <div class="kv"><span data-i18n="orderLifecycle">订单闭环</span><b id="orderLifecycleStatus" class="warn-text">-</b></div>
         <div class="next-steps" id="testnetNextSteps"></div>
         <div class="testnet-actions">
           <button class="primary" id="dryRunButton" data-i18n="runTestnetDryRun">测试网 Dry-run</button>
-          <button id="observeButton" data-i18n="runTestnetObserve">观察 3 轮</button>
+          <button id="observeButton" data-i18n="runTestnetObserve">观察 6 轮</button>
         </div>
       </section>
       <section class="inspect-section">
@@ -773,7 +780,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       </div>
     </aside>
   </main>
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <script>
     const I18N = {
@@ -869,10 +876,23 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         automationFlag: "自动交易开关",
         lastDryRun: "最近 Dry-run",
         runTestnetDryRun: "测试网 Dry-run",
-        runTestnetObserve: "观察 3 轮",
+        runTestnetObserve: "观察 6 轮",
+        observeCycles: "观察周期",
+        observeReason: "失败原因",
+        orderLifecycle: "订单闭环",
         exchangeHealth: "交易所连通性",
         publicMarketData: "公开行情",
         tradingEndpoint: "交易端点",
+        reloadStarted: "正在刷新数据",
+        reloadPassed: "数据已刷新",
+        reloadFailed: "刷新失败",
+        exportStarted: "正在导出 JSON",
+        exportPassed: "JSON 已导出",
+        exportFailed: "导出失败",
+        settingsUnavailable: "设置面板尚未启用；当前控制台保持只读。",
+        navUnavailable: "该导航入口尚未启用；当前控制台保持只读。",
+        currentNav: "已经在当前页面",
+        langAlreadyActive: "已经是当前语言",
         dryRunStarted: "正在运行测试网 dry-run",
         dryRunPassed: "测试网 dry-run 通过",
         dryRunFailed: "测试网 dry-run 未通过",
@@ -1168,6 +1188,11 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         exchange_server_error: "交易所服务异常",
         exchange_timeout: "交易所请求超时",
         filled: "已成交",
+        canceled: "已取消",
+        healthy_idle: "健康空闲",
+        safe_rejected: "安全拒绝",
+        not_attempted: "未尝试",
+        submitted: "已提交",
         idle: "空闲",
         rejected: "已拒绝",
         eventSignal: "{symbol} {side}，原因：{reason}",
@@ -1269,10 +1294,23 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         automationFlag: "Automation Flag",
         lastDryRun: "Latest Dry-run",
         runTestnetDryRun: "Run Testnet Dry-run",
-        runTestnetObserve: "Observe 3 Cycles",
+        runTestnetObserve: "Observe 6 Cycles",
+        observeCycles: "Observation Cycles",
+        observeReason: "Failure Reason",
+        orderLifecycle: "Order Lifecycle",
         exchangeHealth: "Exchange Health",
         publicMarketData: "Public Market Data",
         tradingEndpoint: "Trading Endpoint",
+        reloadStarted: "Reloading data",
+        reloadPassed: "Data reloaded",
+        reloadFailed: "Reload failed",
+        exportStarted: "Exporting JSON",
+        exportPassed: "JSON exported",
+        exportFailed: "Export failed",
+        settingsUnavailable: "Settings are not enabled; this console is read-only.",
+        navUnavailable: "This navigation entry is not enabled; this console is read-only.",
+        currentNav: "Already on this page",
+        langAlreadyActive: "Language already active",
         dryRunStarted: "Running testnet dry-run",
         dryRunPassed: "Testnet dry-run passed",
         dryRunFailed: "Testnet dry-run failed",
@@ -1568,6 +1606,11 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         exchange_server_error: "Exchange server error",
         exchange_timeout: "Exchange request timed out",
         filled: "FILLED",
+        canceled: "CANCELED",
+        healthy_idle: "HEALTHY IDLE",
+        safe_rejected: "SAFELY REJECTED",
+        not_attempted: "NOT ATTEMPTED",
+        submitted: "SUBMITTED",
         idle: "IDLE",
         rejected: "REJECTED",
         eventSignal: "{symbol} {side} because {reason}",
@@ -1979,8 +2022,11 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       const credentialEl = $("credentialStatus");
       const automationEl = $("testnetAutomationStatus");
       const dryRunEl = $("dryRunStatus");
+      const observeCycleEl = $("observeCycleStatus");
+      const observeReasonEl = $("observeReasonStatus");
+      const orderLifecycleEl = $("orderLifecycleStatus");
       const nextStepsEl = $("testnetNextSteps");
-      if (!statusEl || !credentialEl || !automationEl || !dryRunEl || !nextStepsEl) return;
+      if (!statusEl || !credentialEl || !automationEl || !dryRunEl || !observeCycleEl || !observeReasonEl || !orderLifecycleEl || !nextStepsEl) return;
 
       const readiness = state.readiness;
       if (!readiness) {
@@ -1989,6 +2035,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         credentialEl.textContent = "-";
         automationEl.textContent = "-";
         dryRunEl.textContent = state.dryRun ? dryRunLabel(state.dryRun) : t("noDryRunYet");
+        renderObservationSummary(state.observation);
         nextStepsEl.innerHTML = "";
         return;
       }
@@ -2006,8 +2053,9 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       automationEl.className = automationCheck?.status === "pass" ? "good" : "warn-text";
       automationEl.textContent = automationCheck?.status === "pass" ? t("enabled") : t("disabled");
 
-      dryRunEl.className = observation ? dryRunClass(observation) : dryRunClass(state.dryRun);
-      dryRunEl.textContent = observation ? observationLabel(observation) : (state.dryRun ? dryRunLabel(state.dryRun) : t("noDryRunYet"));
+      dryRunEl.className = dryRunClass(state.dryRun);
+      dryRunEl.textContent = state.dryRun ? dryRunLabel(state.dryRun) : t("noDryRunYet");
+      renderObservationSummary(observation);
 
       const steps = observationSteps(observation) || state.dryRun?.next_steps || readiness.next_steps || [];
       if (!steps.length) {
@@ -2017,6 +2065,64 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       nextStepsEl.innerHTML = steps.slice(0, 3)
         .map((step) => `<span>${escapeHtml(messageLabel(step))}</span>`)
         .join("");
+    }
+
+    function renderObservationSummary(observation) {
+      const cycleEl = $("observeCycleStatus");
+      const reasonEl = $("observeReasonStatus");
+      const lifecycleEl = $("orderLifecycleStatus");
+      if (!cycleEl || !reasonEl || !lifecycleEl) return;
+      const lifecycle = latestOrderLifecycle(observation) || state.dryRun?.order_lifecycle || null;
+      if (!observation) {
+        cycleEl.className = "warn-text";
+        cycleEl.textContent = "-";
+        reasonEl.className = "";
+        reasonEl.textContent = "-";
+        lifecycleEl.className = lifecycleClass(lifecycle);
+        lifecycleEl.textContent = lifecycleLabel(lifecycle);
+        return;
+      }
+      const completed = Number(observation.cycles_completed || 0);
+      const requested = Number(observation.cycles_requested || 0);
+      const failures = Number(observation.failures || 0);
+      cycleEl.className = observation.status === "pass" ? "good" : "bad";
+      cycleEl.textContent = `${completed}/${requested || completed} ${t("passedShort")} ${Math.max(0, completed - failures)} / ${t("failedShort")} ${failures}`;
+      reasonEl.className = failures > 0 ? "bad" : "good";
+      reasonEl.textContent = latestObservationReason(observation);
+      lifecycleEl.className = lifecycleClass(lifecycle);
+      lifecycleEl.textContent = lifecycleLabel(lifecycle);
+    }
+
+    function latestObservationReason(observation) {
+      if (!observation) return "-";
+      const last = (observation.results || [])[Math.max(0, (observation.results || []).length - 1)] || {};
+      const reason = last.reason || observation.reason || observation.status || "";
+      if (!reason || reason === "pass") return t("noNextSteps");
+      return messageLabel(reason);
+    }
+
+    function latestOrderLifecycle(observation) {
+      if (observation?.order_lifecycle) return observation.order_lifecycle;
+      const results = observation?.results || [];
+      for (let index = results.length - 1; index >= 0; index -= 1) {
+        const lifecycle = results[index]?.result?.order_lifecycle;
+        if (lifecycle) return lifecycle;
+      }
+      return null;
+    }
+
+    function lifecycleClass(lifecycle) {
+      if (!lifecycle) return "warn-text";
+      if (lifecycle.acceptable) return "good";
+      if (Number(lifecycle.open_order_count || 0) > 0) return "bad";
+      return "warn-text";
+    }
+
+    function lifecycleLabel(lifecycle) {
+      if (!lifecycle) return "-";
+      const stateLabel = messageLabel(lifecycle.state || "unknown");
+      const openCount = Number(lifecycle.open_order_count || 0);
+      return openCount > 0 ? `${stateLabel} / open ${openCount}` : stateLabel;
     }
 
     function renderExchangeHealth() {
@@ -2068,6 +2174,12 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       state.launchLive = launchLive;
       renderExchangeHealth();
       renderLaunchChecklist();
+    }
+
+    function refreshLaunchChecklistInBackground() {
+      refreshLaunchChecklist().catch((error) => {
+        toast(`${t("reloadFailed")}: ${error?.message || String(error)}`);
+      });
     }
 
     function renderLaunchChecklist() {
@@ -2193,11 +2305,15 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
           </span>
           <span class="chip ${Number(market.change_pct) >= 0 ? "green" : "red"}">${escapeHtml(pct(market.change_pct, 2))}</span>
         `;
-        row.addEventListener("click", async () => {
+        row.addEventListener("click", () => withButtonFeedback(row, {
+          loadingText: t("reloadStarted"),
+          successText: t("reloadPassed"),
+          failureText: t("reloadFailed")
+        }, async () => {
           state.selectedMarket = market;
           renderMarkets(markets);
           await loadCandles();
-        });
+        }));
         root.appendChild(row);
       }
     }
@@ -2508,43 +2624,109 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
 
     function toast(message) {
       const el = $("toast");
-      el.textContent = message;
+      el.textContent = message || "";
       el.style.display = "block";
       window.clearTimeout(toast.timer);
       toast.timer = window.setTimeout(() => { el.style.display = "none"; }, 2800);
     }
 
-    $("reloadButton").addEventListener("click", () => {
-      boot().catch((error) => toast(error.message || String(error)));
-    });
+    async function withButtonFeedback(button, options, action) {
+      if (!button || button.disabled) return null;
+      const startedAt = Date.now();
+      const originalText = button.textContent;
+      let succeeded = false;
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      button.textContent = options.loadingText || t("loading");
+      toast(options.loadingText || t("loading"));
+      try {
+        const result = await action();
+        const successText = typeof options.successText === "function" ? options.successText(result) : options.successText;
+        if (successText) toast(successText);
+        succeeded = true;
+        return result;
+      } catch (error) {
+        const raw = error?.message || String(error);
+        const failureText = typeof options.failureText === "function" ? options.failureText(error) : options.failureText;
+        toast(failureText ? `${failureText}: ${raw}` : raw);
+        return null;
+      } finally {
+        const minimumMs = Number(options.minimumMs ?? 220);
+        const remainingMs = minimumMs - (Date.now() - startedAt);
+        if (remainingMs > 0) await new Promise((resolve) => window.setTimeout(resolve, remainingMs));
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        if (!succeeded || options.restoreText !== false) button.textContent = originalText;
+      }
+    }
+
+    $("reloadButton").addEventListener("click", () => withButtonFeedback($("reloadButton"), {
+      loadingText: t("reloadStarted"),
+      successText: t("reloadPassed"),
+      failureText: t("reloadFailed")
+    }, () => boot()));
     document.querySelectorAll("[data-lang-option]").forEach((button) => {
       button.addEventListener("click", () => {
-        if (button.dataset.langOption === state.lang) return;
-        state.lang = button.dataset.langOption === "en" ? "en" : "zh";
-        persistLanguage(state.lang);
-        applyLanguage();
-        toast(t("langChanged"));
+        if (button.dataset.langOption === state.lang) {
+          withButtonFeedback(button, {
+            loadingText: t("loading"),
+            successText: t("langAlreadyActive"),
+            failureText: t("reloadFailed")
+          }, async () => null);
+          return;
+        }
+        withButtonFeedback(button, {
+          loadingText: t("loading"),
+          successText: () => t("langChanged"),
+          failureText: t("reloadFailed"),
+          restoreText: false
+        }, async () => {
+          state.lang = button.dataset.langOption === "en" ? "en" : "zh";
+          persistLanguage(state.lang);
+          applyLanguage();
+        });
       });
     });
-    $("backtestButton").addEventListener("click", () => toast(t("runLocally")));
-    $("simulateButton").addEventListener("click", () => toast(t("simulateOnly")));
-    $("pauseButton").addEventListener("click", async () => {
-      const action = $("pauseButton").dataset.action === "resume" ? "resume" : "pause";
-      try {
-        const data = await postJson("/api/automation-control", { action, reason: `dashboard_${action}` });
-        if (data.status !== "ok") throw new Error(messageLabel(data.reason || "invalid_control_action"));
-        state.preflight = data.preflight;
-        renderPreflight();
-        toast(action === "pause" ? t("pauseRequested") : t("resumeRequested"));
-      } catch (error) {
-        toast(error.message || String(error));
-      }
+    document.querySelectorAll(".rail-btn").forEach((button) => {
+      button.addEventListener("click", () => withButtonFeedback(button, {
+        loadingText: t("loading"),
+        successText: button.classList.contains("active") ? t("currentNav") : t("navUnavailable"),
+        failureText: t("reloadFailed")
+      }, async () => null));
     });
-    $("dryRunButton").addEventListener("click", async () => {
-      const button = $("dryRunButton");
-      button.disabled = true;
-      toast(t("dryRunStarted"));
-      try {
+    $("settingsButton").addEventListener("click", () => withButtonFeedback($("settingsButton"), {
+      loadingText: t("loading"),
+      successText: t("settingsUnavailable"),
+      failureText: t("reloadFailed")
+    }, async () => null));
+    $("backtestButton").addEventListener("click", () => withButtonFeedback($("backtestButton"), {
+      loadingText: t("loading"),
+      successText: t("runLocally"),
+      failureText: t("reloadFailed")
+    }, async () => null));
+    $("simulateButton").addEventListener("click", () => withButtonFeedback($("simulateButton"), {
+      loadingText: t("loading"),
+      successText: t("simulateOnly"),
+      failureText: t("reloadFailed")
+    }, async () => null));
+    $("pauseButton").addEventListener("click", () => withButtonFeedback($("pauseButton"), {
+      loadingText: t("loading"),
+      successText: (data) => data?.action === "pause" ? t("pauseRequested") : t("resumeRequested"),
+      failureText: t("reloadFailed"),
+      restoreText: false
+    }, async () => {
+      const action = $("pauseButton").dataset.action === "resume" ? "resume" : "pause";
+      const data = await postJson("/api/automation-control", { action, reason: `dashboard_${action}` });
+      if (data.status !== "ok") throw new Error(messageLabel(data.reason || "invalid_control_action"));
+      state.preflight = data.preflight;
+      renderPreflight();
+      return { ...data, action };
+    }));
+    $("dryRunButton").addEventListener("click", () => withButtonFeedback($("dryRunButton"), {
+      loadingText: t("dryRunStarted"),
+      successText: (data) => data?.status === "pass" ? t("dryRunPassed") : `${t("dryRunFailed")}: ${messageLabel(data?.reason || data?.status || "dryRunUnavailable")}`,
+      failureText: t("dryRunFailed")
+    }, async () => {
         const data = await postJson("/api/testnet-dry-run", {
           execute_loop: false,
           sync_limit: 500,
@@ -2554,21 +2736,19 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         if (data.preflight) state.preflight = data.preflight;
         renderPreflight();
         renderReadiness();
-        await refreshLaunchChecklist();
-        toast(data.status === "pass" ? t("dryRunPassed") : `${t("dryRunFailed")}: ${messageLabel(data.reason || data.status)}`);
-      } catch (error) {
-        toast(error.message || String(error));
-      } finally {
-        button.disabled = false;
-      }
-    });
-    $("observeButton").addEventListener("click", async () => {
-      const button = $("observeButton");
-      button.disabled = true;
-      toast(t("observeStarted"));
-      try {
+        refreshLaunchChecklistInBackground();
+        return data;
+    }));
+    $("observeButton").addEventListener("click", () => withButtonFeedback($("observeButton"), {
+      loadingText: t("observeStarted"),
+      successText: (data) => {
+        const last = (data?.results || [])[Math.max(0, (data?.results || []).length - 1)] || {};
+        return data?.status === "pass" ? t("observePassed") : `${t("observeFailed")}: ${messageLabel(last.reason || data?.status || "dryRunUnavailable")}`;
+      },
+      failureText: t("observeFailed")
+    }, async () => {
         const data = await postJson("/api/testnet-observe", {
-          cycles: 3,
+          cycles: 6,
           execute_loop: false,
           sync_limit: 500,
           sleep_seconds: 0,
@@ -2579,24 +2759,27 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         if (last.result?.preflight) state.preflight = last.result.preflight;
         renderPreflight();
         renderReadiness();
-        await refreshLaunchChecklist();
-        state.ops = await fetchJson("/api/ops");
-        renderOps();
-        toast(data.status === "pass" ? t("observePassed") : `${t("observeFailed")}: ${messageLabel(last.reason || data.status)}`);
-      } catch (error) {
-        toast(error.message || String(error));
-      } finally {
-        button.disabled = false;
-      }
-    });
-    $("exportButton").addEventListener("click", () => {
+        refreshLaunchChecklistInBackground();
+        fetchJson("/api/ops").then((ops) => {
+          state.ops = ops;
+          renderOps();
+        }).catch((error) => {
+          toast(`${t("reloadFailed")}: ${error?.message || String(error)}`);
+        });
+        return data;
+    }));
+    $("exportButton").addEventListener("click", () => withButtonFeedback($("exportButton"), {
+      loadingText: t("exportStarted"),
+      successText: t("exportPassed"),
+      failureText: t("exportFailed")
+    }, async () => {
       const blob = new Blob([JSON.stringify(state.ops, null, 2)], { type: "application/json" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
       link.download = "kxian-ops-dashboard.json";
       link.click();
       URL.revokeObjectURL(link.href);
-    });
+    }));
     window.addEventListener("resize", () => drawChart(state.candles));
 
     applyLanguage();

@@ -456,7 +456,8 @@ class SQLiteStorage:
                 interval,
                 execute_loop=False,
             )
-            if non_order_observation is None or non_order_observation.get("status") != "pass":
+            non_order_failures = _testnet_observation_acceptance_failures(non_order_observation, execute_loop=False)
+            if non_order_failures:
                 return {
                     "status": "blocked",
                     "reason": "source_profile_missing_passing_testnet_observation",
@@ -468,6 +469,7 @@ class SQLiteStorage:
                     "interval": interval,
                     "testnet_observation": non_order_observation,
                     "execute_loop_required": False,
+                    "failures": non_order_failures,
                 }
             order_observation = self.latest_testnet_observation(
                 exchange,
@@ -475,7 +477,8 @@ class SQLiteStorage:
                 interval,
                 execute_loop=True,
             )
-            if order_observation is None or order_observation.get("status") != "pass":
+            order_failures = _testnet_observation_acceptance_failures(order_observation, execute_loop=True)
+            if order_failures:
                 return {
                     "status": "blocked",
                     "reason": "source_profile_missing_passing_testnet_order_observation",
@@ -487,6 +490,7 @@ class SQLiteStorage:
                     "interval": interval,
                     "testnet_observation": order_observation,
                     "execute_loop_required": True,
+                    "failures": order_failures,
                 }
 
         promoted_evidence = {
@@ -1608,8 +1612,13 @@ def _testnet_observation_summary(observation_id: str, events: list[dict[str, Any
     failures = sum(1 for event in events if event.get("status") != "idle")
     first = events[0] if events else {}
     latest = events[-1] if events else {}
+    latest_payload = latest.get("payload") or {}
+    order_lifecycle = latest_payload.get("order_lifecycle")
+    lifecycle_acceptable = True
+    if isinstance(order_lifecycle, dict):
+        lifecycle_acceptable = bool(order_lifecycle.get("acceptable", False))
     return {
-        "status": "pass" if cycles_completed > 0 and failures == 0 else "fail",
+        "status": "pass" if cycles_completed > 0 and failures == 0 and lifecycle_acceptable else "fail",
         "observation_id": observation_id,
         "mode": "testnet",
         "exchange": latest.get("exchange") or first.get("exchange") or "",
@@ -1620,6 +1629,28 @@ def _testnet_observation_summary(observation_id: str, events: list[dict[str, Any
         "failures": failures,
         "started_at": first.get("created_at"),
         "completed_at": latest.get("created_at"),
-        "latest_reason": (latest.get("payload") or {}).get("reason", ""),
+        "latest_reason": latest_payload.get("reason", ""),
         "latest_message": latest.get("message", ""),
+        "order_lifecycle": order_lifecycle if isinstance(order_lifecycle, dict) else None,
     }
+
+
+def _testnet_observation_acceptance_failures(observation: dict[str, Any] | None, execute_loop: bool) -> list[str]:
+    if observation is None:
+        return ["missing_testnet_observation"]
+    failures: list[str] = []
+    if observation.get("status") != "pass":
+        failures.append("testnet_observation_not_passed")
+    if bool(observation.get("execute_loop")) != execute_loop:
+        failures.append("testnet_observation_scope_mismatch")
+    if int(observation.get("cycles_completed") or 0) < 6:
+        failures.append("insufficient_testnet_observation_cycles")
+    lifecycle = observation.get("order_lifecycle")
+    if execute_loop:
+        if not isinstance(lifecycle, dict):
+            failures.append("missing_order_lifecycle")
+        elif not bool(lifecycle.get("acceptable", False)):
+            failures.append("testnet_observation_order_lifecycle_not_acceptable")
+    elif isinstance(lifecycle, dict) and not bool(lifecycle.get("acceptable", False)):
+        failures.append("testnet_observation_order_lifecycle_not_acceptable")
+    return failures

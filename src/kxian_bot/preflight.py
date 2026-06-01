@@ -28,7 +28,11 @@ REQUIRED_TABLES = {
 }
 
 
-def run_preflight(config: RuntimeConfig, storage: SQLiteStorage | None = None) -> dict[str, Any]:
+def run_preflight(
+    config: RuntimeConfig,
+    storage: SQLiteStorage | None = None,
+    require_testnet_autotrade: bool = True,
+) -> dict[str, Any]:
     storage = storage or SQLiteStorage(config.db_path)
     config = apply_active_strategy_profile(config, storage)
     checks = [
@@ -43,7 +47,7 @@ def run_preflight(config: RuntimeConfig, storage: SQLiteStorage | None = None) -
         _walk_forward_gate_check(config, storage),
         _open_orders_check(config, storage),
         _loop_lock_check(config, storage),
-        _execution_mode_check(config),
+        _execution_mode_check(config, require_testnet_autotrade=require_testnet_autotrade),
     ]
     status = "pass" if all(check["status"] == "pass" for check in checks) else "fail"
     return {
@@ -554,7 +558,7 @@ def _loop_lock_check(config: RuntimeConfig, storage: SQLiteStorage) -> dict[str,
     }
 
 
-def _execution_mode_check(config: RuntimeConfig) -> dict[str, Any]:
+def _execution_mode_check(config: RuntimeConfig, *, require_testnet_autotrade: bool = True) -> dict[str, Any]:
     failures: list[str] = []
     if config.mode == "live":
         if not config.allow_live:
@@ -569,7 +573,7 @@ def _execution_mode_check(config: RuntimeConfig) -> dict[str, Any]:
             failures.append("live_confirmation_required")
     if config.mode == "testnet" and config.exchange == "binance" and not config.use_testnet:
         failures.append("binance_testnet_endpoint_required")
-    if config.mode == "testnet" and not config.enable_testnet_autotrade:
+    if config.mode == "testnet" and require_testnet_autotrade and not config.enable_testnet_autotrade:
         failures.append("testnet_autotrade_disabled")
     return {
         "name": "execution_mode",

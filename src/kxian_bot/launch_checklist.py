@@ -5,6 +5,12 @@ from typing import Any
 from kxian_bot.config import RuntimeConfig, expected_live_confirmation
 from kxian_bot.readiness import run_readiness
 from kxian_bot.storage import SQLiteStorage
+from kxian_bot.testnet_scope import (
+    has_unacceptable_order_lifecycle,
+    testnet_closed_loop_next_steps,
+    testnet_closed_loop_scope_failures,
+    testnet_observation_failures,
+)
 
 
 def run_launch_checklist(
@@ -23,7 +29,11 @@ def run_launch_checklist(
         }
 
     target_config = _target_config(config, target)
-    readiness = run_readiness(target_config, storage)
+    readiness = run_readiness(
+        target_config,
+        storage,
+        require_testnet_autotrade=target != "testnet",
+    )
     if target == "testnet":
         return _testnet_checklist(target_config, storage, readiness)
     return _live_checklist(target_config, storage, readiness)
@@ -43,12 +53,27 @@ def _testnet_checklist(config: RuntimeConfig, storage: SQLiteStorage, readiness:
         config.interval,
         execute_loop=True,
     )
-    checks = [
+    prerequisite_checks = [
+        _testnet_closed_loop_scope_check(config, require_autotrade=False),
         _readiness_check(readiness),
         _profile_check(profile, require_testnet_promotion=True),
     ]
+    checks = [
+        *prerequisite_checks,
+        _testnet_bounded_autotrade_check(config),
+        _observation_check(non_order_observation, name="testnet_observation", execute_loop=False),
+        _observation_check(order_observation, name="testnet_order_observation", execute_loop=True),
+    ]
+    cleanup_check = _observation_cleanup_check(non_order_observation, order_observation)
+    checks = [*checks, cleanup_check]
+    prerequisite_status = "pass" if all(check["status"] == "pass" for check in prerequisite_checks) else "blocked"
     status = "pass" if all(check["status"] == "pass" for check in checks) else "blocked"
-    phase = _testnet_phase(status, non_order_observation, order_observation)
+    phase = _testnet_phase(
+        prerequisite_status,
+        non_order_observation,
+        order_observation,
+        bounded_autotrade_ready=config.enable_testnet_autotrade,
+    )
     return {
         "status": status,
         "reason": "testnet_launch_ready" if status == "pass" else "testnet_launch_blocked",
@@ -64,7 +89,7 @@ def _testnet_checklist(config: RuntimeConfig, storage: SQLiteStorage, readiness:
             "non_ordering": non_order_observation,
             "bounded_order": order_observation,
         },
-        "next_steps": _testnet_next_steps(status, readiness, profile, non_order_observation, order_observation),
+        "next_steps": _testnet_next_steps(config, prerequisite_status, readiness, profile, non_order_observation, order_observation),
     }
 
 
@@ -141,6 +166,35 @@ def _readiness_check(readiness: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _testnet_closed_loop_scope_check(config: RuntimeConfig, *, require_autotrade: bool = True) -> dict[str, Any]:
+    failures = testnet_closed_loop_scope_failures(config, require_autotrade=require_autotrade)
+    return {
+        "name": "testnet_closed_loop_scope",
+        "status": "pass" if not failures else "fail",
+        "message": "testnet closed-loop scope is fixed" if not failures else "testnet closed-loop scope is not fixed",
+        "details": {"failures": failures},
+    }
+
+
+def _testnet_bounded_autotrade_check(config: RuntimeConfig) -> dict[str, Any]:
+    failures = []
+    if not config.enable_testnet_autotrade:
+        failures.append("testnet_autotrade_disabled")
+    return {
+        "name": "testnet_bounded_autotrade",
+        "status": "pass" if not failures else "fail",
+        "message": (
+            "testnet bounded autotrade is enabled"
+            if not failures
+            else "testnet bounded autotrade must be enabled before --execute-loop observation"
+        ),
+        "details": {
+            "failures": failures,
+            "enable_testnet_autotrade": config.enable_testnet_autotrade,
+        },
+    }
+
+
 def _profile_check(
     profile: dict[str, Any] | None,
     name: str = "testnet_profile",
@@ -203,18 +257,7 @@ def _live_profile_check(profile: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _observation_check(observation: dict[str, Any] | None, name: str, execute_loop: bool) -> dict[str, Any]:
-    if observation is None:
-        return {
-            "name": name,
-            "status": "fail",
-            "message": "testnet observation evidence is missing",
-            "details": {"execute_loop": execute_loop, "reason": "missing_testnet_observation"},
-        }
-    failures: list[str] = []
-    if observation.get("status") != "pass":
-        failures.append("testnet_observation_not_passed")
-    if bool(observation.get("execute_loop")) != execute_loop:
-        failures.append("testnet_observation_scope_mismatch")
+    failures = testnet_observation_failures(observation, execute_loop=execute_loop)
     return {
         "name": name,
         "status": "pass" if not failures else "fail",
@@ -227,21 +270,47 @@ def _observation_check(observation: dict[str, Any] | None, name: str, execute_lo
     }
 
 
+def _observation_cleanup_check(
+    non_order_observation: dict[str, Any] | None,
+    order_observation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    failures = []
+    if has_unacceptable_order_lifecycle(non_order_observation):
+        failures.append("non_order_observation_order_lifecycle_not_acceptable")
+    if has_unacceptable_order_lifecycle(order_observation):
+        failures.append("bounded_order_observation_order_lifecycle_not_acceptable")
+    return {
+        "name": "testnet_order_cleanup",
+        "status": "pass" if not failures else "fail",
+        "message": "testnet observation orders are clean" if not failures else "testnet observation orders require cleanup",
+        "details": {
+            "failures": failures,
+            "non_ordering": non_order_observation,
+            "bounded_order": order_observation,
+        },
+    }
+
+
 def _testnet_phase(
     status: str,
     non_order_observation: dict[str, Any] | None,
     order_observation: dict[str, Any] | None,
+    *,
+    bounded_autotrade_ready: bool = True,
 ) -> str:
     if status != "pass":
         return "blocked_before_testnet"
-    if order_observation and order_observation.get("status") == "pass":
+    if _acceptable_observation(non_order_observation, execute_loop=False) and _acceptable_observation(order_observation, execute_loop=True):
+        if not bounded_autotrade_ready:
+            return "ready_for_bounded_testnet_order_observation"
         return "testnet_observed_ready_for_live_review"
-    if non_order_observation and non_order_observation.get("status") == "pass":
+    if _acceptable_observation(non_order_observation, execute_loop=False):
         return "ready_for_bounded_testnet_order_observation"
     return "ready_for_testnet_dry_run"
 
 
 def _testnet_next_steps(
+    config: RuntimeConfig,
     status: str,
     readiness: dict[str, Any],
     profile: dict[str, Any] | None,
@@ -251,15 +320,30 @@ def _testnet_next_steps(
     steps: list[str] = []
     if profile is None:
         steps.append("run kxian-bot promote-profile-to-testnet after the paper profile passes multi-sample validation")
+    steps.extend(testnet_closed_loop_next_steps(testnet_closed_loop_scope_failures(config)))
     if readiness.get("status") != "pass":
         steps.extend(readiness.get("next_steps", []))
-    if status == "pass" and not non_order_observation:
+    if has_unacceptable_order_lifecycle(non_order_observation) or has_unacceptable_order_lifecycle(order_observation):
+        steps.append("clear open sandbox orders with order-status, cancel-order if needed, sync-fills, then rerun preflight")
+    if status == "pass" and not _acceptable_observation(non_order_observation, execute_loop=False):
         steps.append("run kxian-bot testnet-dry-run, then kxian-bot testnet-observe --cycles 6 --sleep-seconds 60")
-    if status == "pass" and non_order_observation and non_order_observation.get("status") == "pass" and not order_observation:
-        steps.append("run kxian-bot testnet-observe --cycles 6 --sleep-seconds 60 --execute-loop")
-    if status == "pass" and order_observation and order_observation.get("status") == "pass":
-        steps.append("review testnet fills and promote the profile to live only for a very small order cap")
+    if status == "pass" and _acceptable_observation(non_order_observation, execute_loop=False) and not _acceptable_observation(order_observation, execute_loop=True):
+        lifecycle = order_observation.get("order_lifecycle") if isinstance(order_observation, dict) else None
+        if isinstance(lifecycle, dict) and lifecycle.get("state") == "open_orders":
+            steps.append("clear open sandbox orders with order-status, cancel-order if needed, sync-fills, then rerun preflight")
+        steps.append("run kxian-bot testnet-dry-run --execute-loop --sleep-seconds 0, then kxian-bot testnet-observe --cycles 6 --sleep-seconds 60 --execute-loop")
+    if (
+        status == "pass"
+        and _acceptable_observation(non_order_observation, execute_loop=False)
+        and _acceptable_observation(order_observation, execute_loop=True)
+        and config.enable_testnet_autotrade
+    ):
+        steps.append("stop at testnet_observed_ready_for_live_review; do not promote to live in this phase")
     return _dedupe(steps)
+
+
+def _acceptable_observation(observation: dict[str, Any] | None, execute_loop: bool) -> bool:
+    return not testnet_observation_failures(observation, execute_loop=execute_loop)
 
 
 def _live_next_steps(
@@ -273,9 +357,11 @@ def _live_next_steps(
     steps: list[str] = []
     if testnet_profile is None:
         steps.append("promote a passing paper profile to testnet before live review")
-    if non_order_observation is None or non_order_observation.get("status") != "pass":
+    if testnet_observation_failures(non_order_observation, execute_loop=False):
         steps.append("run kxian-bot testnet-observe --cycles 6 --sleep-seconds 60 before live promotion")
-    if order_observation is None or order_observation.get("status") != "pass":
+    if has_unacceptable_order_lifecycle(order_observation):
+        steps.append("clear open sandbox orders with order-status, cancel-order if needed, sync-fills, then rerun preflight")
+    if testnet_observation_failures(order_observation, execute_loop=True):
         steps.append("run kxian-bot testnet-observe --cycles 6 --sleep-seconds 60 --execute-loop before live promotion")
     if live_profile is None:
         steps.append("run kxian-bot promote-profile-to-live after both testnet observations pass")

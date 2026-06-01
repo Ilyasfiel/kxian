@@ -769,6 +769,7 @@ def test_testnet_dry_run_reports_missing_credentials_as_json(monkeypatch, capsys
         return RuntimeConfig(
             mode="testnet",
             db_path=str(tmp_path / "test.sqlite3"),
+            interval="4h",
             binance_api_key="",
             binance_api_secret="",
         )
@@ -933,6 +934,40 @@ def test_testnet_observe_cli_runs_relaxed_config_and_passes_options(monkeypatch,
         "execute_loop": True,
         "sleep_seconds": 0.0,
         "continue_on_failure": True,
+    }
+
+
+def test_testnet_observe_cli_defaults_to_six_cycles(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(mode="testnet", db_path=str(tmp_path / "test.sqlite3"))
+    received = {}
+
+    def fake_observation(received_config, cycles, sync_limit, execute_loop, sleep_seconds, continue_on_failure):
+        received.update(
+            {
+                "cycles": cycles,
+                "sync_limit": sync_limit,
+                "execute_loop": execute_loop,
+                "sleep_seconds": sleep_seconds,
+                "continue_on_failure": continue_on_failure,
+            }
+        )
+        return {"status": "pass", "cycles_requested": cycles, "cycles_completed": cycles, "failures": 0}
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "run_testnet_observation", fake_observation)
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "testnet-observe"])
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["cycles_requested"] == 6
+    assert output["cycles_completed"] == 6
+    assert received == {
+        "cycles": 6,
+        "sync_limit": 500,
+        "execute_loop": False,
+        "sleep_seconds": 60.0,
+        "continue_on_failure": False,
     }
 
 
@@ -2353,6 +2388,59 @@ def test_promote_profile_to_live_cli_outputs_promoted_profile(monkeypatch, capsy
     assert output["promoted"]["evidence"]["testnet_observation"]["bounded_order"]["execute_loop"] is True
 
 
+def test_promote_profile_to_live_cli_exits_when_bounded_observation_lacks_lifecycle(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "test.sqlite3"
+    storage = cli.SQLiteStorage(db_path)
+    storage.upsert_strategy_profile(
+        mode="testnet",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="moving_average_cross",
+        parameters={"short_window": 10, "long_window": 30, "stop_loss_pct": 2, "take_profit_pct": 8},
+        evidence={
+            "sample_validation": {"status": "pass", "sample_count": 2, "passed_samples": 2, "failed_samples": 0},
+            "promotion": {"source_profile_key": "paper:binance:BTCUSDT:4h", "target_mode": "testnet"},
+        },
+        updated_by="test",
+    )
+    _record_testnet_observation(storage, execute_loop=False)
+    for cycle in range(1, 7):
+        storage.record_loop_event(
+            LoopEvent(
+                loop_id="observe-legacy-order",
+                iteration=cycle,
+                status="idle",
+                mode="testnet",
+                exchange="binance",
+                symbol="BTCUSDT",
+                interval="4h",
+                message="testnet_observe_passed",
+                payload={
+                    "kind": "testnet_observe",
+                    "observation_id": "legacy-order",
+                    "cycle": cycle,
+                    "status": "pass",
+                    "execute_loop": True,
+                },
+            )
+        )
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(db_path), interval="4h"))
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "promote-profile-to-live"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected live profile promotion to exit when lifecycle is missing")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "blocked"
+    assert output["reason"] == "source_profile_missing_passing_testnet_order_observation"
+    assert "missing_order_lifecycle" in output["failures"]
+
+
 def test_promote_profile_to_live_cli_exits_without_testnet_promotion_evidence(monkeypatch, capsys, tmp_path):
     db_path = tmp_path / "test.sqlite3"
     storage = cli.SQLiteStorage(db_path)
@@ -2410,6 +2498,41 @@ def test_promote_profile_to_live_cli_exits_without_testnet_observation(monkeypat
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "blocked"
     assert output["reason"] == "source_profile_missing_passing_testnet_observation"
+
+
+def test_promote_profile_to_live_cli_exits_when_testnet_observation_cycles_are_insufficient(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "test.sqlite3"
+    storage = cli.SQLiteStorage(db_path)
+    storage.upsert_strategy_profile(
+        mode="testnet",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="moving_average_cross",
+        parameters={"short_window": 10, "long_window": 30},
+        evidence={
+            "sample_validation": {"status": "pass", "sample_count": 2, "passed_samples": 2, "failed_samples": 0},
+            "promotion": {"source_profile_key": "paper:binance:BTCUSDT:4h", "target_mode": "testnet"},
+        },
+        updated_by="test",
+    )
+    _record_testnet_observation(storage, execute_loop=False, cycles=5)
+    _record_testnet_observation(storage, execute_loop=True, cycles=6)
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(db_path), interval="4h"))
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "promote-profile-to-live"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected live profile promotion to exit when testnet observation has fewer than six cycles")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "blocked"
+    assert output["reason"] == "source_profile_missing_passing_testnet_observation"
+    assert output["testnet_observation"]["cycles_completed"] == 5
+    assert "insufficient_testnet_observation_cycles" in output["failures"]
 
 
 def test_dashboard_cli(monkeypatch, tmp_path):
@@ -2868,25 +2991,31 @@ def test_cli_expands_input_file_directories_and_globs(tmp_path):
     assert cli.parse_input_files(f"{first}, explicit.csv") == [str(first), "explicit.csv"]
 
 
-def _record_testnet_observation(storage, execute_loop: bool):
+def _record_testnet_observation(storage, execute_loop: bool, cycles: int = 6):
     observation_id = "order" if execute_loop else "check"
-    storage.record_loop_event(
-        LoopEvent(
-            loop_id=f"observe-{observation_id}",
-            iteration=1,
-            status="idle",
-            mode="testnet",
-            exchange="binance",
-            symbol="BTCUSDT",
-            interval="4h",
-            message="testnet_observe_passed",
-            payload={
-                "kind": "testnet_observe",
-                "observation_id": observation_id,
-                "cycle": 1,
-                "status": "pass",
-                "reason": "",
-                "execute_loop": execute_loop,
-            },
+    for cycle in range(1, cycles + 1):
+        storage.record_loop_event(
+            LoopEvent(
+                loop_id=f"observe-{observation_id}",
+                iteration=cycle,
+                status="idle",
+                mode="testnet",
+                exchange="binance",
+                symbol="BTCUSDT",
+                interval="4h",
+                message="testnet_observe_passed",
+                payload={
+                    "kind": "testnet_observe",
+                    "observation_id": observation_id,
+                    "cycle": cycle,
+                    "status": "pass",
+                    "reason": "",
+                    "execute_loop": execute_loop,
+                    "order_lifecycle": {
+                        "state": "healthy_idle" if execute_loop else "not_attempted",
+                        "acceptable": True,
+                        "open_order_count": 0,
+                    },
+                },
+            )
         )
-    )

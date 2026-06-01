@@ -8,15 +8,19 @@ from kxian_bot.storage import SQLiteStorage
 from kxian_bot.strategy_profile import apply_active_strategy_profile
 
 
-def run_readiness(config: RuntimeConfig, storage: SQLiteStorage | None = None) -> dict[str, Any]:
+def run_readiness(
+    config: RuntimeConfig,
+    storage: SQLiteStorage | None = None,
+    require_testnet_autotrade: bool = False,
+) -> dict[str, Any]:
     storage = storage or SQLiteStorage(config.db_path)
     config = apply_active_strategy_profile(config, storage)
-    preflight = run_preflight(config, storage)
+    preflight = run_preflight(config, storage, require_testnet_autotrade=require_testnet_autotrade)
     checks = [
         _profile_check(config),
         _credential_check(config),
         _endpoint_check(config),
-        _automation_check(config),
+        _automation_check(config, require_testnet_autotrade=require_testnet_autotrade),
         _risk_check(config),
         _live_support_check(config),
         _preflight_summary_check(preflight),
@@ -100,9 +104,9 @@ def _endpoint_check(config: RuntimeConfig) -> dict[str, Any]:
     }
 
 
-def _automation_check(config: RuntimeConfig) -> dict[str, Any]:
+def _automation_check(config: RuntimeConfig, *, require_testnet_autotrade: bool = True) -> dict[str, Any]:
     failures: list[str] = []
-    if config.mode == "testnet" and not config.enable_testnet_autotrade:
+    if config.mode == "testnet" and require_testnet_autotrade and not config.enable_testnet_autotrade:
         failures.append("testnet_autotrade_disabled")
     if config.mode == "live":
         if not config.allow_live:
@@ -219,7 +223,12 @@ def _next_steps(config: RuntimeConfig, checks: list[dict[str, Any]], preflight: 
     if "open_orders" in failed_preflight:
         steps.append("refresh, fill, or cancel existing sandbox orders before starting a new loop")
     if not steps and config.mode == "testnet":
-        steps.append("run kxian-bot testnet-dry-run, then add --execute-loop for one bounded sandbox iteration")
+        if config.enable_testnet_autotrade:
+            steps.append("run kxian-bot testnet-dry-run, then add --execute-loop for one bounded sandbox iteration")
+        else:
+            steps.append(
+                "run kxian-bot testnet-dry-run and non-ordering testnet-observe; set KXIAN_ENABLE_TESTNET_AUTOTRADE=true before bounded --execute-loop"
+            )
     if not steps and config.mode == "live":
         steps.append("run a bounded live trade-loop with a very small KXIAN_MAX_LIVE_ORDER_USDT and monitor fills")
     if not steps:

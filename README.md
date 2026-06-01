@@ -8,7 +8,7 @@ Kxian Bot is a small Python trading bot skeleton for watching crypto K-lines, ge
 - Live trading is blocked unless `KXIAN_ALLOW_LIVE=true`
 - Public market data can use Binance or OKX K-line endpoints
 - Strategy automation submits exchange orders only in `paper` mode by default
-- Testnet strategy automation requires `KXIAN_ENABLE_TESTNET_AUTOTRADE=true`
+- Bounded testnet order automation requires `KXIAN_ENABLE_TESTNET_AUTOTRADE=true`; non-ordering testnet checks can run first with it disabled
 - Live strategy automation requires `KXIAN_ALLOW_LIVE=true`, `KXIAN_LIVE_DRY_RUN=false`, `KXIAN_ENABLE_LIVE_AUTOTRADE=true`, `KXIAN_USE_TESTNET=false`, and `KXIAN_LIVE_CONFIRMATION=LIVE:<exchange>:<symbol>:<interval>`
 - Live orders are capped by `KXIAN_MAX_LIVE_ORDER_USDT` before they can leave the bot
 
@@ -285,7 +285,7 @@ kxian-bot dashboard --host 127.0.0.1 --port 8000
 
 Then open `http://127.0.0.1:8000`. The dashboard reads the same SQLite database and shows local K-lines, recent batch backtest rankings, stress pass-rate evidence, walk-forward evidence, and trade records. It does not place orders.
 The right-side inspector also shows the startup preflight gate, including whether automation is ready and which checks are passing or blocking startup.
-The testnet panel includes `Testnet Dry-run` for one credential/preflight/fill-sync check and `Observe 3 Cycles` for repeated non-ordering sandbox observation. Both actions report missing credentials and next steps without printing secret values.
+The testnet panel includes `Testnet Dry-run` for one credential/preflight/fill-sync check and `Observe 6 Cycles` for repeated non-ordering sandbox observation. Both actions report missing credentials and next steps without printing secret values.
 The dashboard opens in Chinese by default. Use the language switch in the top-right corner to toggle Chinese and English. It also accepts `?lang=zh` or `?lang=en` and stores your last explicit choice in browser local storage.
 
 ## Paper trade loop
@@ -338,7 +338,7 @@ kxian-bot trade-loop --max-iterations 5 --sleep-seconds 1
 
 During continuous operation, `trade-loop` counts consecutive runtime failures such as exchange exceptions and unsafe rejected execution states. After `KXIAN_MAX_CONSECUTIVE_LOOP_ERRORS` failures in a row, default `3`, it records `loop_circuit_breaker_tripped`, pauses the current mode/exchange/symbol/interval automation control, releases the loop lock, and exits with code 2 so an operator can inspect the dashboard before resuming.
 
-Bounded `testnet` loops, for example `--max-iterations 1`, can run once `launch-checklist --target testnet` reaches `ready_for_testnet_dry_run`; this is the controlled path used to create sandbox observation evidence. An unbounded `testnet` `trade-loop` requires the stronger `testnet_observed_ready_for_live_review` phase, meaning both non-ordering and bounded-order testnet observations have passed. `live` loops require `launch-checklist --target live` to reach `ready_for_bounded_live_loop`.
+For the current testnet close-loop, create bounded sandbox evidence through the runbook commands `testnet-dry-run --execute-loop` and `testnet-observe --execute-loop`; do not treat `ready_for_testnet_dry_run` as final acceptance. A generic bounded `testnet` `trade-loop`, for example `--max-iterations 1`, is an operational primitive behind that controlled path. An unbounded `testnet` `trade-loop` requires the stronger `testnet_observed_ready_for_live_review` phase, meaning both non-ordering and bounded-order testnet observations have passed. `live` loops require `launch-checklist --target live` to reach `ready_for_bounded_live_loop`.
 
 If public exchange data is blocked or unavailable, replay candles already stored in SQLite:
 
@@ -363,39 +363,19 @@ The runner also restores the latest persisted `risk_state` for the current mode,
 Only one strategy loop can run for the same mode, exchange, symbol, and interval at a time. The loop writes a SQLite heartbeat lock and releases it on normal exit; `KXIAN_LOOP_LOCK_STALE_SECONDS` controls when a stale lock can be taken over after a crash.
 Optional protective exits can close an existing long position before the next strategy sell signal. Set `KXIAN_STOP_LOSS_PCT`, `KXIAN_TAKE_PROFIT_PCT`, and/or `KXIAN_TRAILING_STOP_PCT` to a positive percentage; the runner restores the average entry price from filled orders, persists the trailing peak price per mode/exchange/symbol/interval, and emits `stop_loss_triggered`, `take_profit_triggered`, or `trailing_stop_triggered` sell signals when the latest candle crosses the threshold. The same exits are included in `backtest`, `stress-backtest`, `walk-forward`, and `batch-backtest` so validation matches live behavior.
 
-## Live dry-run signing
+## Later-stage live dry-run signing reference
 
-Live dry-run mode builds a signed order request for inspection, then rejects execution. Binance uses the spot testnet URL when `KXIAN_USE_TESTNET=true`; OKX demo requests include `x-simulated-trading: 1`.
+Do not run this section during the current testnet close-loop. It is retained only as a later-stage reference after a separate live review.
 
-```powershell
-$env:KXIAN_MODE="live"
-$env:KXIAN_ALLOW_LIVE="true"
-$env:KXIAN_LIVE_DRY_RUN="true"
-$env:KXIAN_USE_TESTNET="true"
-$env:KXIAN_ENABLE_TESTNET_AUTOTRADE="false"
-```
+Live dry-run mode builds a signed order request for inspection, then rejects execution. Binance uses the spot testnet URL when `KXIAN_USE_TESTNET=true`; OKX demo requests include `x-simulated-trading: 1`. Treat any live dry-run environment changes as a separate reviewed stage, not part of the `Binance testnet / BTCUSDT / 4h` close-loop acceptance.
 
-## Live strategy automation
+## Later-stage live strategy automation reference
 
-Only move to live after the exact same profile has passed paper validation, testnet dry-run, non-ordering testnet observation, and bounded testnet order observation. Promote the testnet profile, then start with a very small live order cap:
+Do not run this section during the current testnet close-loop. This stage explicitly stops at `launch-checklist --target testnet`.
 
-```powershell
-$env:KXIAN_MODE="testnet"
-kxian-bot promote-profile-to-live --updated-by operator
-$env:KXIAN_MODE="live"
-$env:KXIAN_EXCHANGE="binance"
-$env:KXIAN_USE_TESTNET="false"
-$env:KXIAN_ALLOW_LIVE="true"
-$env:KXIAN_LIVE_DRY_RUN="false"
-$env:KXIAN_ENABLE_LIVE_AUTOTRADE="true"
-$env:KXIAN_LIVE_CONFIRMATION="LIVE:binance:BTCUSDT:4h"
-$env:KXIAN_MAX_LIVE_ORDER_USDT="25"
-kxian-bot readiness
-kxian-bot launch-checklist --target live
-kxian-bot trade-loop --max-iterations 1 --sleep-seconds 0
-```
+Only move to live after a separate live review, after the exact same profile has passed paper validation, testnet dry-run, non-ordering testnet observation, and bounded testnet order observation. That later review would cover live-profile promotion, live readiness, live launch checklist, explicit live confirmation, and one very small bounded live loop. The current close-loop does not execute those commands and does not enable live switches.
 
-Live automation still runs the same preflight gates, refreshes open exchange orders, syncs balances/fills, refuses unknown entry-price positions, and records exchange orders, fills, loop events, and risk state in SQLite. `promote-profile-to-live` and `launch-checklist --target live` both require passing non-ordering testnet observation and bounded testnet order observation for the same exchange, symbol, and interval before a live profile is considered ready. Keep `KXIAN_MAX_LIVE_ORDER_USDT` small until live fills and protective exits have been observed.
+Live automation still runs the same preflight gates, refreshes open exchange orders, syncs balances/fills, refuses unknown entry-price positions, and records exchange orders, fills, loop events, and risk state in SQLite. `promote-profile-to-live` and `launch-checklist --target live` both require passing non-ordering testnet observation and bounded testnet order observation for the same exchange, symbol, and interval before a live profile is considered ready. This is explicitly outside the current testnet close-loop deliverable.
 
 ## Testnet manual orders
 
@@ -403,11 +383,10 @@ Use `testnet` mode for manual test exchange requests. This is separate from `liv
 
 ```powershell
 Copy-Item .env.testnet.example .env
-# Fill .env with Spot Testnet credentials before running the commands below.
+# Fill .env manually with Spot Testnet credentials before running the commands below.
+# Do not paste production API keys and do not commit .env.
 $env:KXIAN_MODE="testnet"
 $env:KXIAN_EXCHANGE="binance"
-$env:KXIAN_BINANCE_API_KEY="your_testnet_key"
-$env:KXIAN_BINANCE_API_SECRET="your_testnet_secret"
 kxian-bot testnet-setup-check
 kxian-bot test-order --side buy --quantity 0.001 --price 10000
 kxian-bot order-status --order-id 12345
@@ -423,6 +402,7 @@ For OKX demo trading, use `KXIAN_EXCHANGE=okx` and demo credentials. Requests in
 ## Testnet strategy automation
 
 After paper trading is stable, you can let the strategy loop submit testnet/demo orders. This still does not use real money, but it can place orders on the configured exchange sandbox account.
+The direct `trade-loop` example below is an operational reference, not the current close-loop acceptance path. For this stage, create evidence through `testnet-dry-run` and `testnet-observe --cycles 6` before any longer loop.
 
 ```powershell
 $env:KXIAN_MODE="testnet"
@@ -448,8 +428,9 @@ By default, testnet automation also requires matching persisted `backtest`, mult
 
 Recommended testnet promotion order:
 
+For this close-loop, use `docs/测试网闭环操作手册.md` as the authority and start the fixed acceptance sequence at `strategy-profile`. The research command below is optional prior strategy-selection context, not part of the fixed `Binance testnet / BTCUSDT / 4h` acceptance sequence.
+
 ```powershell
-kxian-bot research-strategy --exchange binance --symbol BTCUSDT --interval 1m --start 2024-01-01 --end 2024-07-01 --sample-days 30 --output-dir data/samples --source auto --limit-per-request 1000 --min-candles 1000 --resample-intervals raw,5m,15m,30m,1h --short-windows 5,10,20 --long-windows 30,50,100 --segments 6 --top 10 --promote
 kxian-bot strategy-profile
 kxian-bot testnet-setup-check
 kxian-bot readiness
@@ -459,10 +440,10 @@ kxian-bot testnet-dry-run
 kxian-bot testnet-observe --cycles 6 --sleep-seconds 60
 kxian-bot testnet-dry-run --execute-loop --sleep-seconds 0
 kxian-bot testnet-observe --cycles 6 --sleep-seconds 60 --execute-loop
-kxian-bot launch-checklist --target live
+kxian-bot launch-checklist --target testnet
 ```
 
-Only run a longer `trade-loop` after `select-samples --promote` finds a candidate, `validate-samples` passes for the chosen parameters, `readiness` passes, `launch-checklist --target testnet` passes, `exchange-health` passes from the intended host, `testnet-dry-run` passes, non-ordering `testnet-observe` is stable, the bounded `--execute-loop` observation behaves as expected in the exchange sandbox, and `launch-checklist --target live` confirms the live promotion path.
+This close-loop stops at `launch-checklist --target testnet` with `status=pass` and `phase=testnet_observed_ready_for_live_review`. Do not run `promote-profile-to-live`, do not start live mode, and do not enable live switches in this stage.
 
 ## Notes
 

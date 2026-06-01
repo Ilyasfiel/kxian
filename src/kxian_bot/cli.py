@@ -413,7 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
     dry_run_parser.add_argument("--sleep-seconds", type=float, default=0.0)
 
     observe_parser = subparsers.add_parser("testnet-observe")
-    observe_parser.add_argument("--cycles", type=int, default=3)
+    observe_parser.add_argument("--cycles", type=int, default=6)
     observe_parser.add_argument("--sync-limit", type=int, default=500)
     observe_parser.add_argument("--sleep-seconds", type=float, default=60.0)
     observe_parser.add_argument(

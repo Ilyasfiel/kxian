@@ -43,7 +43,7 @@ def test_preflight_passes_for_ready_testnet_database(tmp_path):
         enable_testnet_autotrade=True,
     )
 
-    result = run_preflight(config, storage)
+    result = run_preflight(config, storage, require_testnet_autotrade=False)
 
     assert result["status"] == "pass"
     assert {check["name"]: check["status"] for check in result["checks"]} == {
@@ -62,7 +62,7 @@ def test_preflight_passes_for_ready_testnet_database(tmp_path):
     }
 
 
-def test_preflight_reports_missing_data_gate_and_disabled_execution(tmp_path):
+def test_preflight_reports_missing_data_gate_and_allows_non_ordering_testnet_checks(tmp_path):
     db_path = tmp_path / "kxian.sqlite3"
     storage = SQLiteStorage(db_path)
     config = RuntimeConfig(
@@ -77,7 +77,7 @@ def test_preflight_reports_missing_data_gate_and_disabled_execution(tmp_path):
         enable_testnet_autotrade=False,
     )
 
-    result = run_preflight(config, storage)
+    result = run_preflight(config, storage, require_testnet_autotrade=False)
     checks = {check["name"]: check for check in result["checks"]}
 
     assert result["status"] == "fail"
@@ -88,6 +88,30 @@ def test_preflight_reports_missing_data_gate_and_disabled_execution(tmp_path):
     assert checks["sample_validation_gate"]["status"] == "pass"
     assert checks["stress_gate"]["status"] == "pass"
     assert checks["walk_forward_gate"]["status"] == "pass"
+    assert checks["execution_mode"]["details"]["failures"] == []
+
+
+def test_preflight_can_require_testnet_autotrade_for_bounded_execution(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    config = RuntimeConfig(
+        mode="testnet",
+        exchange="binance",
+        db_path=str(db_path),
+        market_data_source="exchange",
+        binance_api_key="key",
+        binance_api_secret="secret",
+        enable_testnet_autotrade=False,
+        require_strategy_gate=False,
+        require_sample_validation_gate=False,
+        require_stress_gate=False,
+        require_walk_forward_gate=False,
+    )
+
+    result = run_preflight(config, storage, require_testnet_autotrade=True)
+    checks = {check["name"]: check for check in result["checks"]}
+
+    assert result["status"] == "fail"
     assert checks["execution_mode"]["details"]["failures"] == ["testnet_autotrade_disabled"]
 
 

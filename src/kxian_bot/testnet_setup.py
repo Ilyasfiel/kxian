@@ -6,18 +6,20 @@ from kxian_bot.config import RuntimeConfig
 from kxian_bot.exchange_health import run_exchange_health_check
 from kxian_bot.launch_checklist import run_launch_checklist
 from kxian_bot.readiness import run_readiness
+from kxian_bot.testnet_scope import testnet_closed_loop_next_steps, testnet_closed_loop_scope_failures
 from kxian_bot.testnet_dry_run import exchange_credential_status
 
 
 def run_testnet_setup_check(config: RuntimeConfig, timeout_seconds: float = 5.0) -> dict[str, Any]:
     testnet_config = config.model_copy(update={"mode": "testnet", "use_testnet": True, "market_data_source": "exchange"})
     credential_failures, credential_presence = exchange_credential_status(testnet_config)
-    readiness = run_readiness(testnet_config)
+    readiness = run_readiness(testnet_config, require_testnet_autotrade=False)
     launch = run_launch_checklist(testnet_config, target_mode="testnet")
     exchange_health = run_exchange_health_check(testnet_config, timeout_seconds=timeout_seconds)
+    scope_failures = testnet_closed_loop_scope_failures(testnet_config, require_autotrade=False)
     checks = [
+        _scope_check(scope_failures),
         _credential_check(credential_failures, credential_presence),
-        _automation_check(testnet_config),
         _exchange_health_check(exchange_health),
         _readiness_check(readiness),
         _launch_check(launch),
@@ -42,6 +44,15 @@ def run_testnet_setup_check(config: RuntimeConfig, timeout_seconds: float = 5.0)
     }
 
 
+def _scope_check(failures: list[str]) -> dict[str, Any]:
+    return {
+        "name": "testnet_closed_loop_scope",
+        "status": "pass" if not failures else "fail",
+        "message": "testnet closed-loop scope is fixed" if not failures else "testnet closed-loop scope is not fixed",
+        "details": {"failures": failures},
+    }
+
+
 def _credential_check(failures: list[str], presence: dict[str, bool]) -> dict[str, Any]:
     return {
         "name": "credentials",
@@ -51,16 +62,6 @@ def _credential_check(failures: list[str], presence: dict[str, bool]) -> dict[st
             "failures": failures,
             "present": presence,
         },
-    }
-
-
-def _automation_check(config: RuntimeConfig) -> dict[str, Any]:
-    failures = [] if config.enable_testnet_autotrade else ["testnet_autotrade_disabled"]
-    return {
-        "name": "testnet_autotrade",
-        "status": "pass" if not failures else "fail",
-        "message": "testnet autotrade is enabled" if not failures else "testnet autotrade is disabled",
-        "details": {"failures": failures, "enable_testnet_autotrade": config.enable_testnet_autotrade},
     }
 
 
@@ -115,6 +116,7 @@ def _next_steps(
     exchange_health: dict[str, Any],
 ) -> list[str]:
     steps: list[str] = []
+    steps.extend(testnet_closed_loop_next_steps(testnet_closed_loop_scope_failures(config, require_autotrade=False)))
     if credential_failures:
         if config.exchange == "binance":
             steps.append("put Binance Spot Testnet KXIAN_BINANCE_API_KEY and KXIAN_BINANCE_API_SECRET in .env")
@@ -122,7 +124,7 @@ def _next_steps(
             steps.append("put OKX demo API key, secret, and passphrase in .env")
     steps.extend(exchange_health.get("next_steps", []))
     if not config.enable_testnet_autotrade:
-        steps.append("set KXIAN_ENABLE_TESTNET_AUTOTRADE=true only after credentials and exchange-health pass")
+        steps.append("set KXIAN_ENABLE_TESTNET_AUTOTRADE=true before bounded testnet order observation")
     if readiness.get("status") != "pass":
         steps.extend(readiness.get("next_steps", []))
     if launch.get("status") == "pass":
