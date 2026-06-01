@@ -279,6 +279,37 @@ def test_binance_testnet_mode_requires_testnet_endpoint(monkeypatch):
         raise AssertionError("Expected ConfigError for Binance testnet without testnet endpoint")
 
 
+def test_bitget_loads_live_credentials(monkeypatch):
+    monkeypatch.setenv("KXIAN_MODE", "live")
+    monkeypatch.setenv("KXIAN_ALLOW_LIVE", "true")
+    monkeypatch.setenv("KXIAN_EXCHANGE", "bitget")
+    monkeypatch.setenv("KXIAN_BITGET_API_KEY", "key")
+    monkeypatch.setenv("KXIAN_BITGET_API_SECRET", "secret")
+    monkeypatch.setenv("KXIAN_BITGET_API_PASSPHRASE", "passphrase")
+
+    config = load_config()
+
+    assert config.exchange == "bitget"
+    assert config.bitget_api_key == "key"
+    assert config.bitget_api_secret == "secret"
+    assert config.bitget_api_passphrase == "passphrase"
+
+
+def test_bitget_testnet_mode_is_blocked(monkeypatch):
+    monkeypatch.setenv("KXIAN_MODE", "testnet")
+    monkeypatch.setenv("KXIAN_EXCHANGE", "bitget")
+    monkeypatch.setenv("KXIAN_BITGET_API_KEY", "key")
+    monkeypatch.setenv("KXIAN_BITGET_API_SECRET", "secret")
+    monkeypatch.setenv("KXIAN_BITGET_API_PASSPHRASE", "passphrase")
+
+    try:
+        load_config()
+    except ConfigError as exc:
+        assert "Bitget spot sandbox/demo is not confirmed" in str(exc)
+    else:
+        raise AssertionError("Expected ConfigError for Bitget testnet mode")
+
+
 def test_loads_values_from_dotenv(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     env_file.write_text(
@@ -358,3 +389,19 @@ def test_live_okx_requires_passphrase(monkeypatch):
         assert "OKX credentials" in str(exc)
     else:
         raise AssertionError("Expected ConfigError for missing OKX passphrase")
+
+
+def test_live_bitget_requires_passphrase(monkeypatch):
+    monkeypatch.setenv("KXIAN_MODE", "live")
+    monkeypatch.setenv("KXIAN_ALLOW_LIVE", "true")
+    monkeypatch.setenv("KXIAN_EXCHANGE", "bitget")
+    monkeypatch.setenv("KXIAN_BITGET_API_KEY", "key")
+    monkeypatch.setenv("KXIAN_BITGET_API_SECRET", "secret")
+    monkeypatch.delenv("KXIAN_BITGET_API_PASSPHRASE", raising=False)
+
+    try:
+        load_config()
+    except ConfigError as exc:
+        assert "Bitget credentials" in str(exc)
+    else:
+        raise AssertionError("Expected ConfigError for missing Bitget passphrase")

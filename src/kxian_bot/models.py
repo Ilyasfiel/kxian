@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 Side = Literal["buy", "sell"]
 Mode = Literal["paper", "testnet", "live"]
-Exchange = Literal["binance", "okx"]
+Exchange = Literal["binance", "okx", "bitget"]
 OrderStatus = Literal["submitted", "filled", "partially_filled", "canceled", "rejected"]
 
 
@@ -68,6 +68,42 @@ class SignedOrderRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     body: str = ""
     signature_payload: str
+
+    def model_dump(self, *args, **kwargs) -> dict[str, Any]:
+        payload = super().model_dump(*args, **kwargs)
+        payload["headers"] = _redact_signed_headers(payload.get("headers", {}))
+        payload["params"] = _redact_signed_params(payload.get("params", {}))
+        if payload.get("signature_payload"):
+            payload["signature_payload"] = "<redacted>"
+        return payload
+
+    def model_dump_json(self, *args, **kwargs) -> str:
+        import json
+
+        return json.dumps(self.model_dump(*args, **kwargs), separators=(",", ":"))
+
+
+def _redact_signed_headers(headers: dict[str, str]) -> dict[str, str]:
+    sensitive = {
+        "X-MBX-APIKEY",
+        "OK-ACCESS-KEY",
+        "OK-ACCESS-SIGN",
+        "OK-ACCESS-PASSPHRASE",
+        "ACCESS-KEY",
+        "ACCESS-SIGN",
+        "ACCESS-PASSPHRASE",
+    }
+    return {
+        key: "<redacted>" if key.upper() in sensitive else value
+        for key, value in dict(headers or {}).items()
+    }
+
+
+def _redact_signed_params(params: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: "<redacted>" if str(key).lower() == "signature" else value
+        for key, value in dict(params or {}).items()
+    }
 
 
 class ExchangeOrder(BaseModel):

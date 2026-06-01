@@ -25,3 +25,20 @@ def test_change_log_records_testnet_candidate_scope():
     assert "Binance testnet / BTCUSDT / 4h" in change_log
     assert "不执行 `promote-profile-to-live`" in change_log
     assert "不进行真实 live 下单" in change_log
+
+def test_bitget_gray_runbook_covers_manual_confirmation_and_single_canary():
+    runbook = (ROOT / "docs" / "Bitget实盘灰度手册.md").read_text(encoding="utf-8")
+    assert "KXIAN_EXCHANGE=bitget" in runbook
+    assert "KXIAN_USE_TESTNET=false" in runbook
+    assert "KXIAN_MAX_LIVE_ORDER_USDT=5" in runbook
+    assert "KXIAN_LIVE_CONFIRMATION=LIVE:bitget:BTCUSDT:4h" in runbook
+    assert "KXIAN_BITGET_API_PASSPHRASE" in runbook
+    assert "提现" in runbook
+    assert "IP 白名单" in runbook
+    assert "approve-bitget-live-gray" in runbook
+    assert "trade-loop --max-iterations 1 --sleep-seconds 0" in runbook
+    assert "order-status --order-id" in runbook
+    assert "cancel-order --order-id" in runbook
+    assert "sync-fills" in runbook
+    assert "launch-checklist --target live" in runbook
+    assert "status=pass" in runbook

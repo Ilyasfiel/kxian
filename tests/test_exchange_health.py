@@ -118,3 +118,23 @@ def test_exchange_health_uses_okx_symbol_format(monkeypatch):
     assert result["status"] == "pass"
     assert calls[0][1]["instId"] == "BTC-USDT"
     assert calls[1][0] == "https://www.okx.com/api/v5/public/time"
+
+
+def test_exchange_health_uses_bitget_public_and_trading_endpoints(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, timeout):
+        calls.append((url, params))
+        if url.endswith("/api/v2/spot/market/candles"):
+            return FakeResponse({"code": "00000", "data": [["1", "1", "1", "1", "1", "1", "1", "1"]]})
+        return FakeResponse({"code": "00000", "data": {"serverTime": "1700000000000"}})
+
+    monkeypatch.setattr("kxian_bot.exchange_health.requests.get", fake_get)
+    config = RuntimeConfig(mode="live", exchange="bitget", symbol="BTCUSDT", interval="4h")
+
+    result = run_exchange_health_check(config)
+
+    assert result["status"] == "pass"
+    assert calls[0][0] == "https://api.bitget.com/api/v2/spot/market/candles"
+    assert calls[0][1] == {"symbol": "BTCUSDT", "granularity": "4h", "limit": 1}
+    assert calls[1][0] == "https://api.bitget.com/api/v2/public/time"

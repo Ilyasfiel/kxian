@@ -52,8 +52,98 @@ def test_readiness_reports_missing_testnet_credentials_without_secret_values(tmp
         "okx_api_key": False,
         "okx_api_secret": False,
         "okx_api_passphrase": False,
+        "bitget_api_key": False,
+        "bitget_api_secret": False,
+        "bitget_api_passphrase": False,
     }
     assert "set sandbox API credentials" in result["next_steps"][0]
+
+
+def test_readiness_reports_missing_bitget_credentials_without_secret_values(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        db_path=str(db_path),
+        allow_live=True,
+        use_testnet=False,
+        live_dry_run=True,
+        bitget_api_key="",
+        bitget_api_secret="",
+        bitget_api_passphrase="",
+        require_strategy_gate=False,
+        require_sample_validation_gate=False,
+        require_stress_gate=False,
+        require_walk_forward_gate=False,
+    )
+
+    result = run_readiness(config, SQLiteStorage(db_path))
+    checks = {check["name"]: check for check in result["checks"]}
+
+    assert result["status"] == "fail"
+    assert checks["credentials"]["details"]["failures"] == [
+        "missing_bitget_api_key",
+        "missing_bitget_api_secret",
+        "missing_bitget_api_passphrase",
+    ]
+    assert result["credentials"]["bitget_api_key"] is False
+    assert result["credentials"]["bitget_api_secret"] is False
+    assert result["credentials"]["bitget_api_passphrase"] is False
+    assert "secret-value" not in str(result)
+
+
+def test_readiness_blocks_bitget_testnet_scope(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    config = RuntimeConfig(
+        mode="testnet",
+        exchange="bitget",
+        db_path=str(db_path),
+        use_testnet=True,
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+        require_strategy_gate=False,
+        require_sample_validation_gate=False,
+        require_stress_gate=False,
+        require_walk_forward_gate=False,
+    )
+
+    result = run_readiness(config, SQLiteStorage(db_path), require_testnet_autotrade=False)
+    endpoint_check = {check["name"]: check for check in result["checks"]}["endpoint"]
+
+    assert result["status"] == "fail"
+    assert "bitget_testnet_not_supported" in endpoint_check["details"]["failures"]
+    assert any("Bitget spot sandbox/demo is not confirmed" in step for step in result["next_steps"])
+
+
+def test_readiness_blocks_bitget_live_canary_above_5u(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        db_path=str(db_path),
+        allow_live=True,
+        use_testnet=False,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:1m",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=6,
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+        require_strategy_gate=False,
+        require_sample_validation_gate=False,
+        require_stress_gate=False,
+        require_walk_forward_gate=False,
+    )
+
+    result = run_readiness(config, SQLiteStorage(db_path))
+    automation_check = {check["name"]: check for check in result["checks"]}["automation"]
+
+    assert result["status"] == "fail"
+    assert "bitget_live_canary_limit_exceeded" in automation_check["details"]["failures"]
+    assert any("KXIAN_MAX_LIVE_ORDER_USDT<=5" in step for step in result["next_steps"])
 
 
 def test_readiness_passes_for_ready_testnet_profile(tmp_path):

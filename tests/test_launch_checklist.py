@@ -1,6 +1,6 @@
 from kxian_bot.config import RuntimeConfig
 from kxian_bot.launch_checklist import run_launch_checklist
-from kxian_bot.models import BacktestRunSummary, Candle, LoopEvent, StressBacktestRunSummary, WalkForwardRunSummary
+from kxian_bot.models import BacktestRunSummary, Candle, ExchangeOrder, LoopEvent, StressBacktestRunSummary, WalkForwardRunSummary
 from kxian_bot.storage import SQLiteStorage
 
 
@@ -467,6 +467,232 @@ def test_launch_checklist_blocks_out_of_scope_testnet_target(tmp_path):
     ]
 
 
+def test_launch_checklist_blocks_bitget_live_before_canary(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_bitget_live_profile(storage)
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+    checks = {check["name"]: check for check in result["checks"]}
+
+    assert result["status"] == "blocked"
+    assert result["phase"] == "blocked_before_bitget_live_canary"
+    assert checks["bitget_live_gray_scope"]["status"] == "pass"
+    assert checks["bitget_live_profile"]["status"] == "pass"
+    assert checks["bitget_live_canary_order"]["details"]["failures"] == ["missing_bitget_live_canary_order"]
+    assert any("Bitget" in step or "canary" in step for step in result["next_steps"])
+
+
+def test_launch_checklist_blocks_bitget_live_profile_without_approval_time(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_bitget_live_profile(storage, approved_at=None)
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+    profile_check = next(check for check in result["checks"] if check["name"] == "bitget_live_profile")
+
+    assert result["status"] == "blocked"
+    assert "missing_bitget_live_gray_approval_time" in profile_check["details"]["failures"]
+
+
+def test_launch_checklist_passes_bitget_live_after_safe_canary(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_bitget_live_profile(storage)
+    storage.record_exchange_order(
+        ExchangeOrder(
+            symbol="BTCUSDT",
+            side="buy",
+            quantity=0.0001,
+            price=50000,
+            status="filled",
+            exchange_order_id="bitget-1",
+        ),
+        mode="live",
+        exchange="bitget",
+    )
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+
+    assert result["status"] == "pass"
+    assert result["phase"] == "ready_for_bounded_live_loop"
+    assert result["live_canary"]["latest_order"]["status"] == "filled"
+    assert all(check["status"] == "pass" for check in result["checks"])
+
+
+def test_launch_checklist_passes_bitget_live_after_canceled_canary(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_bitget_live_profile(storage)
+    storage.record_exchange_order(
+        ExchangeOrder(
+            symbol="BTCUSDT",
+            side="buy",
+            quantity=0.0001,
+            price=50000,
+            status="canceled",
+            exchange_order_id="bitget-canceled",
+        ),
+        mode="live",
+        exchange="bitget",
+    )
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+
+    assert result["status"] == "pass"
+    assert result["live_canary"]["latest_order"]["status"] == "canceled"
+
+
+def test_launch_checklist_passes_bitget_live_after_safe_rejected_canary(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_bitget_live_profile(storage)
+    storage.record_exchange_order(
+        ExchangeOrder(
+            symbol="BTCUSDT",
+            side="buy",
+            quantity=0.0001,
+            price=50000,
+            status="rejected",
+            reason="no_signal",
+            exchange_order_id="bitget-idle",
+        ),
+        mode="live",
+        exchange="bitget",
+    )
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+
+    assert result["status"] == "pass"
+    assert result["live_canary"]["latest_order"]["reason"] == "no_signal"
+
+
+def test_launch_checklist_blocks_bitget_live_with_open_canary(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_bitget_live_profile(storage)
+    storage.record_exchange_order(
+        ExchangeOrder(
+            symbol="BTCUSDT",
+            side="buy",
+            quantity=0.0001,
+            price=50000,
+            status="submitted",
+            exchange_order_id="bitget-open",
+        ),
+        mode="live",
+        exchange="bitget",
+    )
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+    order_check = next(check for check in result["checks"] if check["name"] == "bitget_live_canary_order")
+
+    assert result["status"] == "blocked"
+    assert "bitget_live_canary_order_still_open" in order_check["details"]["failures"]
+    assert any("order-status" in step for step in result["next_steps"])
+    assert any("cancel-order" in step for step in result["next_steps"])
+
+
+def test_launch_checklist_blocks_bitget_live_with_unsafe_rejected_canary(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_bitget_live_profile(storage)
+    storage.record_exchange_order(
+        ExchangeOrder(
+            symbol="BTCUSDT",
+            side="buy",
+            quantity=0.0001,
+            price=50000,
+            status="rejected",
+            reason="exchange_invalid_signature",
+            exchange_order_id="bitget-rejected",
+        ),
+        mode="live",
+        exchange="bitget",
+    )
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+    order_check = next(check for check in result["checks"] if check["name"] == "bitget_live_canary_order")
+
+    assert result["status"] == "blocked"
+    assert "bitget_live_canary_order_rejected_unsafely" in order_check["details"]["failures"]
+    assert any("verify signing" in step for step in result["next_steps"])
+
+
+def test_launch_checklist_blocks_bitget_live_with_unknown_canary_status(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_bitget_live_profile(storage)
+    storage._execute(
+        """
+        INSERT INTO exchange_orders
+        (created_at, mode, exchange, symbol, side, quantity, price, status, exchange_order_id, reason, raw_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            1,
+            "live",
+            "bitget",
+            "BTCUSDT",
+            "buy",
+            0.0001,
+            50000,
+            "expired",
+            "bitget-unknown",
+            "",
+            "{}",
+        ),
+    )
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+    order_check = next(check for check in result["checks"] if check["name"] == "bitget_live_canary_order")
+
+    assert result["status"] == "blocked"
+    assert "bitget_live_canary_order_status_unknown" in order_check["details"]["failures"]
+
+
+def test_launch_checklist_ignores_bitget_canary_before_latest_approval(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_bitget_live_profile(storage, approved_at=10)
+    storage._execute(
+        """
+        INSERT INTO exchange_orders
+        (created_at, mode, exchange, symbol, side, quantity, price, status, exchange_order_id, reason, raw_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            9,
+            "live",
+            "bitget",
+            "BTCUSDT",
+            "buy",
+            0.0001,
+            50000,
+            "filled",
+            "old-bitget-filled",
+            "",
+            "{}",
+        ),
+    )
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+    order_check = next(check for check in result["checks"] if check["name"] == "bitget_live_canary_order")
+
+    assert result["status"] == "blocked"
+    assert result["live_canary"]["latest_order"] is None
+    assert order_check["details"]["failures"] == ["missing_bitget_live_canary_order"]
+
+
 def _record_ready_evidence(storage: SQLiteStorage, mode: str) -> None:
     storage.upsert_candles(
         [
@@ -495,6 +721,61 @@ def _record_ready_evidence(storage: SQLiteStorage, mode: str) -> None:
         parameters={"strategy": "moving_average_cross", "short_window": 10, "long_window": 30},
         evidence=evidence,
         updated_by="test",
+    )
+
+
+def _record_bitget_live_profile(storage: SQLiteStorage, approved_at: float | None = 1) -> None:
+    bitget_live_gray = {"status": "approved", "max_order_usdt": 5}
+    if approved_at is not None:
+        bitget_live_gray["approved_at"] = approved_at
+    storage.upsert_candles(
+        [
+            Candle(open_time=i, open=10 + i, high=10 + i, low=10 + i, close=10 + i, volume=1, close_time=i + 1)
+            for i in range(40)
+        ],
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+    )
+    storage.upsert_strategy_profile(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="moving_average_cross",
+        parameters={"strategy": "moving_average_cross", "short_window": 10, "long_window": 30},
+        evidence={
+            "sample_validation": SAMPLE_VALIDATION_EVIDENCE,
+            "bitget_live_gray": bitget_live_gray,
+        },
+        updated_by="test",
+    )
+
+
+def _bitget_live_config(db_path) -> RuntimeConfig:
+    return RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        max_live_order_usdt=5,
+        allow_live=True,
+        use_testnet=False,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+        require_strategy_gate=False,
+        require_sample_validation_gate=False,
+        require_stress_gate=False,
+        require_walk_forward_gate=False,
     )
 
 

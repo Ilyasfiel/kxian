@@ -14,3 +14,11 @@ def test_testnet_env_template_contains_no_secrets_and_keeps_live_disabled():
     assert "KXIAN_LIVE_CREDENTIALS_CONFIRMED=false" in template
     assert "your_testnet_key" not in template
     assert "your_testnet_secret" not in template
+
+
+def test_live_env_template_contains_bitget_credentials():
+    template = Path(".env.example").read_text(encoding="utf-8")
+
+    assert "KXIAN_BITGET_API_KEY=your_key" in template
+    assert "KXIAN_BITGET_API_SECRET=your_secret" in template
+    assert "KXIAN_BITGET_API_PASSPHRASE=your_passphrase" in template

@@ -1,10 +1,15 @@
+import pytest
+import zipfile
+
 from kxian_bot.market_data import (
+    BitgetMarketDataClient,
     BinanceMarketDataClient,
     MarketDataError,
     OkxMarketDataClient,
     SQLiteReplayMarketDataClient,
     aggregate_candles,
     create_market_data_client,
+    fetch_bitget_trading_rule,
     format_okx_symbol,
     interval_to_milliseconds,
     latest_contiguous_candles,
@@ -12,7 +17,6 @@ from kxian_bot.market_data import (
 )
 from kxian_bot.models import Candle
 from kxian_bot.storage import SQLiteStorage
-import zipfile
 
 
 def test_binance_kline_parser():
@@ -152,6 +156,12 @@ def test_market_data_factory_selects_okx():
     assert isinstance(client, OkxMarketDataClient)
 
 
+def test_market_data_factory_selects_bitget():
+    client = create_market_data_client("bitget")
+
+    assert isinstance(client, BitgetMarketDataClient)
+
+
 def test_binance_market_data_factory_can_select_testnet_endpoint(monkeypatch):
     calls = []
 
@@ -166,6 +176,123 @@ def test_binance_market_data_factory_can_select_testnet_endpoint(monkeypatch):
 
     assert candles[0].close == 10.5
     assert calls == ["https://testnet.binance.vision/api/v3/klines"]
+
+
+def test_bitget_kline_parser_sorts_ascending():
+    payload = {
+        "code": "00000",
+        "data": [
+            ["120000", "12", "13", "11", "12", "100", "1200", "1200"],
+            ["60000", "11", "12", "10", "11", "90", "990", "990"],
+        ],
+    }
+
+    candles = BitgetMarketDataClient.parse_klines(payload)
+
+    assert [candle.open_time for candle in candles] == [60000, 120000]
+    assert candles[0].close == 11
+    assert candles[1].volume == 100
+
+
+def test_bitget_fetch_historical_klines_walks_backwards_and_returns_ascending(monkeypatch):
+    calls = []
+    pages = [
+        {
+            "code": "00000",
+            "data": [
+                ["120000", "12", "13", "11", "12", "100", "1200", "1200"],
+                ["60000", "11", "12", "10", "11", "90", "990", "990"],
+            ],
+        },
+        {
+            "code": "00000",
+            "data": [["0", "10", "11", "9", "10", "80", "800", "800"]],
+        },
+    ]
+
+    def fake_get(url, params, timeout):
+        calls.append((url, params))
+        return FakeResponse(pages[len(calls) - 1])
+
+    monkeypatch.setattr("kxian_bot.market_data.requests.get", fake_get)
+
+    candles = BitgetMarketDataClient().fetch_historical_klines(
+        "BTCUSDT",
+        "1m",
+        start_time=0,
+        end_time=120_000,
+        limit_per_request=2,
+    )
+
+    assert [candle.open_time for candle in candles] == [0, 60_000, 120_000]
+    assert calls[0][0] == "https://api.bitget.com/api/v2/spot/market/history-candles"
+    assert calls[0][1]["granularity"] == "1min"
+    assert calls[0][1]["endTime"] == "180000"
+    assert calls[1][1]["endTime"] == "60000"
+
+
+def test_bitget_fetch_klines_uses_explicit_4h_granularity(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, timeout):
+        calls.append((url, params))
+        return FakeResponse({"code": "00000", "data": [["0", "10", "11", "9", "10", "1"]]})
+
+    monkeypatch.setattr("kxian_bot.market_data.requests.get", fake_get)
+
+    candles = BitgetMarketDataClient().fetch_klines("BTCUSDT", "4h", limit=1)
+
+    assert candles[0].open_time == 0
+    assert calls[0][1]["granularity"] == "4h"
+
+
+def test_fetch_bitget_trading_rule_parses_required_fields(monkeypatch):
+    def fake_get(url, params, timeout):
+        return FakeResponse(
+            {
+                "code": "00000",
+                "data": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "pricePrecision": "2",
+                        "quantityPrecision": "6",
+                        "minTradeAmount": "0.00001",
+                        "minTradeUSDT": "5",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("kxian_bot.market_data.requests.get", fake_get)
+
+    rule = fetch_bitget_trading_rule("BTCUSDT")
+
+    assert rule["price_step"] == 0.01
+    assert rule["quantity_step"] == 0.000001
+    assert rule["min_quantity"] == 0.00001
+    assert rule["min_notional"] == 5
+
+
+def test_fetch_bitget_trading_rule_fails_closed_when_required_field_missing(monkeypatch):
+    def fake_get(url, params, timeout):
+        return FakeResponse(
+            {
+                "code": "00000",
+                "data": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "pricePrecision": "2",
+                        "quantityPrecision": "6",
+                        "minTradeAmount": "0.00001",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("kxian_bot.market_data.requests.get", fake_get)
+
+    with pytest.raises(MarketDataError, match="minTradeUSDT"):
+        fetch_bitget_trading_rule("BTCUSDT")
 
 
 class FakeResponse:

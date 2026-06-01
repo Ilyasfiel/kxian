@@ -365,7 +365,12 @@ Optional protective exits can close an existing long position before the next st
 
 ## 实盘灰度准入
 
-实盘只能在单独人工复核后进入小额灰度，详见 `docs/实盘灰度操作手册.md`。`live-setup-check` 是只读准入检查：它强制 live 视图为 `mode=live`、`use_testnet=false`、`market_data_source=exchange`，聚合 readiness、`launch-checklist --target live`、生产端点健康、生产 key 人工确认和首轮 canary 金额上限，并固定返回 `will_submit_orders=false`。
+实盘只能在单独人工复核后进入小额灰度，分两条路径：
+
+- 通用实盘灰度：详见 `docs/实盘灰度操作手册.md`
+- Bitget 实盘灰度：详见 `docs/Bitget实盘灰度手册.md`
+
+`live-setup-check` 是只读准入检查：它强制 live 视图为 `mode=live`、`use_testnet=false`、`market_data_source=exchange`，聚合 readiness、`launch-checklist --target live`、生产端点健康、生产 key 人工确认和首轮 canary 金额上限，并固定返回 `will_submit_orders=false`。
 
 ```powershell
 kxian-bot live-setup-check --timeout-seconds 5
@@ -376,6 +381,8 @@ kxian-bot live-setup-check --timeout-seconds 5
 实盘自动化仍然执行同一套 preflight 门禁，会刷新未完成订单、同步账户和成交、拒绝未知成本价持仓，并把订单、成交、循环事件和风险状态记录到 SQLite。`promote-profile-to-live` 和 `launch-checklist --target live` 都要求同一交易所、交易对、周期已经通过非下单测试网观察和 bounded 测试网下单观察。
 
 单轮 canary 后必须复核账户、成交、挂单和 checklist；任何异常都按 `docs/实盘灰度操作手册.md` 回退，不允许继续扩大运行。
+
+Bitget 路径额外要求 `KXIAN_EXCHANGE=bitget`、`KXIAN_USE_TESTNET=false`、`KXIAN_MAX_LIVE_ORDER_USDT=5`、`KXIAN_LIVE_CONFIRMATION=LIVE:bitget:BTCUSDT:4h`，并先执行 `trading-rules --refresh-from-exchange` 和 `approve-bitget-live-gray`。Bitget 灰度期间不使用 `test-order` 或 `run-once`，只允许一次 bounded `trade-loop --max-iterations 1 --sleep-seconds 0`。
 
 ## Testnet manual orders
 

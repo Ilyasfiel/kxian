@@ -93,6 +93,9 @@ class RuntimeConfig(BaseModel):
     okx_api_key: str = ""
     okx_api_secret: str = ""
     okx_api_passphrase: str = ""
+    bitget_api_key: str = ""
+    bitget_api_secret: str = ""
+    bitget_api_passphrase: str = ""
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -173,13 +176,16 @@ def load_config(validate_execution: bool = True) -> RuntimeConfig:
             okx_api_key=os.getenv("KXIAN_OKX_API_KEY", ""),
             okx_api_secret=os.getenv("KXIAN_OKX_API_SECRET", ""),
             okx_api_passphrase=os.getenv("KXIAN_OKX_API_PASSPHRASE", ""),
+            bitget_api_key=os.getenv("KXIAN_BITGET_API_KEY", ""),
+            bitget_api_secret=os.getenv("KXIAN_BITGET_API_SECRET", ""),
+            bitget_api_passphrase=os.getenv("KXIAN_BITGET_API_PASSPHRASE", ""),
         )
     except ValidationError as exc:
         text = str(exc)
         if "market_data_source" in text:
             raise ConfigError("KXIAN_MARKET_DATA_SOURCE must be one of: exchange, sqlite") from exc
         if "exchange" in text:
-            raise ConfigError("KXIAN_EXCHANGE must be one of: binance, okx") from exc
+            raise ConfigError("KXIAN_EXCHANGE must be one of: binance, okx, bitget") from exc
         if "strategy" in text:
             raise ConfigError(
                 f"KXIAN_STRATEGY must be one of: {', '.join(SUPPORTED_STRATEGIES)}"
@@ -206,12 +212,17 @@ def load_config(validate_execution: bool = True) -> RuntimeConfig:
             )
     if config.mode == "testnet" and config.exchange == "binance" and not config.use_testnet:
         raise ConfigError("Binance testnet mode requires KXIAN_USE_TESTNET=true")
+    if config.mode == "testnet" and config.exchange == "bitget":
+        raise ConfigError("Bitget spot sandbox/demo is not confirmed; use live mode with live dry-run gates for Bitget")
     if config.mode in {"testnet", "live"} and config.exchange == "binance":
         if not config.binance_api_key or not config.binance_api_secret:
             raise ConfigError("Live Binance credentials require Binance credentials")
     if config.mode in {"testnet", "live"} and config.exchange == "okx":
         if not config.okx_api_key or not config.okx_api_secret or not config.okx_api_passphrase:
             raise ConfigError("Live OKX credentials require OKX credentials")
+    if config.mode in {"testnet", "live"} and config.exchange == "bitget":
+        if not config.bitget_api_key or not config.bitget_api_secret or not config.bitget_api_passphrase:
+            raise ConfigError("Live Bitget credentials require Bitget credentials")
     return config
 
 

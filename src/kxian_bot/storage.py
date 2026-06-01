@@ -1170,6 +1170,25 @@ class SQLiteStorage:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def latest_exchange_order(self, mode: str, exchange: str, symbol: str, created_after: float | None = None) -> dict[str, Any] | None:
+        filters = ["mode = ?", "exchange = ?", "symbol = ?"]
+        params: list[Any] = [mode, exchange, symbol]
+        if created_after is not None:
+            filters.append("created_at >= ?")
+            params.append(created_after)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""
+                SELECT created_at, mode, exchange, symbol, side, quantity, price, status, exchange_order_id, reason
+                FROM exchange_orders
+                WHERE {' AND '.join(filters)}
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def list_loop_events(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(

@@ -1662,6 +1662,81 @@ def test_trading_rules_cli_sets_rule(monkeypatch, capsys, tmp_path):
     assert stored["min_notional"] == 10
 
 
+def test_trading_rules_cli_refreshes_bitget_rule(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "test.sqlite3"
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda validate_execution=True: RuntimeConfig(db_path=str(db_path), exchange="bitget"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "fetch_bitget_trading_rule",
+        lambda symbol: {
+            "price_step": 0.01,
+            "quantity_step": 0.000001,
+            "min_quantity": 0.0,
+            "min_notional": 1.0,
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "trading-rules",
+            "--symbol",
+            "BTCUSDT",
+            "--refresh-from-exchange",
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["exchange"] == "bitget"
+    assert output["price_step"] == 0.01
+    assert output["quantity_step"] == 0.000001
+    assert output["min_notional"] == 1.0
+    stored = cli.SQLiteStorage(db_path).latest_trading_rule("bitget", "BTCUSDT")
+    assert stored["min_notional"] == 1.0
+
+
+def test_approve_bitget_live_gray_cli(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "test.sqlite3"
+    captured = {}
+
+    def fake_approve(config, updated_by, confirmation):
+        captured["config"] = config
+        captured["updated_by"] = updated_by
+        captured["confirmation"] = confirmation
+        return {"status": "pass", "reason": "bitget_live_gray_approved"}
+
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda validate_execution=True: RuntimeConfig(db_path=str(db_path), exchange="bitget"),
+    )
+    monkeypatch.setattr(cli, "approve_bitget_live_gray", fake_approve)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "approve-bitget-live-gray",
+            "--updated-by",
+            "operator",
+            "--confirmation",
+            "LIVE:bitget:BTCUSDT:1m",
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "pass"
+    assert captured["updated_by"] == "operator"
+    assert captured["confirmation"] == "LIVE:bitget:BTCUSDT:1m"
+
+
 def test_batch_backtest_cli(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
@@ -3142,6 +3217,144 @@ def test_trade_loop_live_requires_live_launch_checklist(monkeypatch, capsys, tmp
     assert output["reason"] == "launch_checklist_blocked"
     assert output["required_phase"] == "ready_for_bounded_live_loop"
     assert output["checklist"]["target_mode"] == "live"
+    assert FakeRunner.instances == []
+
+
+def test_trade_loop_bitget_live_blocks_unbounded_or_multi_iteration(monkeypatch, capsys, tmp_path):
+    FakeRunner.instances = []
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        db_path=str(tmp_path / "test.sqlite3"),
+        interval="4h",
+        max_live_order_usdt=5,
+    )
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["kxian-bot", "trade-loop", "--max-iterations", "2", "--sleep-seconds", "0"],
+    )
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected Bitget live trade-loop to require exactly one iteration")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason"] == "bitget_live_canary_single_iteration_required"
+    assert output["required_max_iterations"] == 1
+    assert FakeRunner.instances == []
+
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "trade-loop", "--sleep-seconds", "0"])
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected unbounded Bitget live trade-loop to be blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason"] == "bitget_live_canary_single_iteration_required"
+    assert output["max_iterations"] is None
+    assert FakeRunner.instances == []
+
+
+def test_trade_loop_bitget_live_allows_first_single_canary_when_only_canary_order_missing(monkeypatch, capsys, tmp_path):
+    FakeRunner.instances = []
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        db_path=str(tmp_path / "test.sqlite3"),
+        interval="4h",
+        allow_live=True,
+        use_testnet=False,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=5,
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+    )
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr(cli, "run_preflight", lambda config: {"status": "pass", "checks": []})
+    monkeypatch.setattr(
+        cli,
+        "run_launch_checklist",
+        lambda config, target_mode=None: {
+            "status": "blocked",
+            "reason": "bitget_live_launch_blocked",
+            "phase": "blocked_before_bitget_live_canary",
+            "target_mode": target_mode,
+            "checks": [
+                {"name": "readiness", "status": "pass", "details": {"failures": []}},
+                {"name": "bitget_live_gray_scope", "status": "pass", "details": {"failures": []}},
+                {"name": "bitget_live_profile", "status": "pass", "details": {"failures": []}},
+                {"name": "bitget_live_canary_limit", "status": "pass", "details": {"failures": []}},
+                {
+                    "name": "bitget_live_canary_order",
+                    "status": "fail",
+                    "details": {"failures": ["missing_bitget_live_canary_order"]},
+                },
+                {"name": "bitget_live_open_orders", "status": "pass", "details": {"failures": []}},
+            ],
+            "next_steps": ["run exactly one bounded Bitget live canary"],
+        },
+    )
+    monkeypatch.setattr(cli, "run_exchange_health_check", lambda config: {"status": "pass", "next_steps": []})
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "trade-loop", "--max-iterations", "1", "--sleep-seconds", "0"])
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["loop_id"] == "loop-1"
+    assert output["iterations"] == 1
+    assert len(FakeRunner.instances) == 1
+
+
+def test_bitget_live_disables_run_once_and_test_order(monkeypatch, capsys, tmp_path):
+    FakeRunner.instances = []
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        db_path=str(tmp_path / "test.sqlite3"),
+        interval="4h",
+        max_live_order_usdt=5,
+    )
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr(cli, "create_broker", lambda config: FakeBroker())
+
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "run-once"])
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected Bitget live run-once to be blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason"] == "bitget_live_run_once_disabled"
+    assert FakeRunner.instances == []
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["kxian-bot", "test-order", "--side", "buy", "--quantity", "1", "--price", "100"],
+    )
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected Bitget live test-order to be blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason"] == "bitget_live_test_order_disabled"
     assert FakeRunner.instances == []
 
 

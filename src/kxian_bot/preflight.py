@@ -573,8 +573,12 @@ def _execution_mode_check(config: RuntimeConfig, *, require_testnet_autotrade: b
             failures.append("live_confirmation_required")
         if not config.live_credentials_confirmed:
             failures.append("live_credentials_not_confirmed")
+        if config.exchange == "bitget" and config.max_live_order_usdt > 5:
+            failures.append("bitget_live_canary_limit_exceeded")
     if config.mode == "testnet" and config.exchange == "binance" and not config.use_testnet:
         failures.append("binance_testnet_endpoint_required")
+    if config.mode == "testnet" and config.exchange == "bitget":
+        failures.append("bitget_testnet_not_supported")
     if config.mode == "testnet" and require_testnet_autotrade and not config.enable_testnet_autotrade:
         failures.append("testnet_autotrade_disabled")
     return {
@@ -591,6 +595,7 @@ def _execution_mode_check(config: RuntimeConfig, *, require_testnet_autotrade: b
             "live_confirmation_required": expected_live_confirmation(config) if config.mode == "live" else "",
             "live_credentials_confirmed": config.live_credentials_confirmed,
             "max_live_order_usdt": config.max_live_order_usdt,
+            "bitget_live_canary_limit": 5 if config.exchange == "bitget" else None,
         },
     }
 

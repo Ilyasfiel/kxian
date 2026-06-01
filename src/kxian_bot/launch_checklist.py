@@ -6,6 +6,8 @@ from kxian_bot.config import RuntimeConfig, expected_live_confirmation
 from kxian_bot.readiness import run_readiness
 from kxian_bot.storage import SQLiteStorage
 from kxian_bot.testnet_scope import (
+    bitget_live_gray_next_steps,
+    bitget_live_gray_scope_failures,
     has_unacceptable_order_lifecycle,
     testnet_closed_loop_next_steps,
     testnet_closed_loop_scope_failures,
@@ -94,6 +96,9 @@ def _testnet_checklist(config: RuntimeConfig, storage: SQLiteStorage, readiness:
 
 
 def _live_checklist(config: RuntimeConfig, storage: SQLiteStorage, readiness: dict[str, Any]) -> dict[str, Any]:
+    if config.exchange == "bitget":
+        return _bitget_live_checklist(config, storage, readiness)
+
     testnet_profile = storage.active_strategy_profile("testnet", config.exchange, config.symbol, config.interval)
     live_profile = storage.active_strategy_profile("live", config.exchange, config.symbol, config.interval)
     non_order_observation = storage.latest_testnet_observation(
@@ -143,6 +148,49 @@ def _live_checklist(config: RuntimeConfig, storage: SQLiteStorage, readiness: di
             order_observation,
             config,
         ),
+    }
+
+
+def _bitget_live_checklist(config: RuntimeConfig, storage: SQLiteStorage, readiness: dict[str, Any]) -> dict[str, Any]:
+    live_profile = storage.active_strategy_profile("live", config.exchange, config.symbol, config.interval)
+    approval = _bitget_live_gray_evidence(live_profile)
+    latest_order = storage.latest_exchange_order(
+        "live",
+        config.exchange,
+        config.symbol,
+        created_after=_bitget_approval_time(approval),
+    )
+    open_orders = storage.list_open_exchange_orders("live", config.exchange, config.symbol)
+    checks = [
+        _readiness_check(readiness),
+        _bitget_live_scope_check(config),
+        _bitget_live_profile_check(live_profile),
+        _bitget_canary_limit_check(config),
+        _bitget_canary_order_check(latest_order),
+        _bitget_open_order_cleanup_check(open_orders),
+    ]
+    status = "pass" if all(check["status"] == "pass" for check in checks) else "blocked"
+    return {
+        "status": status,
+        "reason": "bitget_live_launch_ready" if status == "pass" else "bitget_live_launch_blocked",
+        "phase": "ready_for_bounded_live_loop" if status == "pass" else "blocked_before_bitget_live_canary",
+        "target_mode": "live",
+        "exchange": config.exchange,
+        "symbol": config.symbol,
+        "interval": config.interval,
+        "live_confirmation_required": expected_live_confirmation(config),
+        "checks": checks,
+        "readiness": readiness,
+        "profiles": {"live": live_profile},
+        "approval": {
+            "approval_id": approval.get("approval_id") if isinstance(approval, dict) else None,
+            "approved_at": approval.get("approved_at") if isinstance(approval, dict) else None,
+        },
+        "live_canary": {
+            "latest_order": latest_order,
+            "open_orders": open_orders,
+        },
+        "next_steps": _bitget_live_next_steps(config, readiness, live_profile, latest_order, open_orders),
     }
 
 
@@ -252,6 +300,137 @@ def _live_profile_check(profile: dict[str, Any] | None) -> dict[str, Any]:
             "profile_key": profile.get("profile_key"),
             "failures": failures,
             "promotion_target_mode": promotion.get("target_mode") if isinstance(promotion, dict) else None,
+        },
+    }
+
+
+def _bitget_live_scope_check(config: RuntimeConfig) -> dict[str, Any]:
+    failures = bitget_live_gray_scope_failures(config)
+    return {
+        "name": "bitget_live_gray_scope",
+        "status": "pass" if not failures else "fail",
+        "message": "Bitget live gray scope is confirmed" if not failures else "Bitget live gray scope is blocked",
+        "details": {
+            "failures": failures,
+            "mode": config.mode,
+            "exchange": config.exchange,
+            "symbol": config.symbol,
+            "interval": config.interval,
+            "use_testnet": config.use_testnet,
+            "live_confirmation_required": expected_live_confirmation(config),
+        },
+    }
+
+
+def _bitget_live_profile_check(profile: dict[str, Any] | None) -> dict[str, Any]:
+    if profile is None:
+        return {
+            "name": "bitget_live_profile",
+            "status": "fail",
+            "message": "Bitget live strategy profile is missing",
+            "details": {"reason": "missing_live_profile"},
+        }
+    evidence = profile.get("evidence", {}) if isinstance(profile.get("evidence"), dict) else {}
+    sample_validation = evidence.get("sample_validation")
+    failures: list[str] = []
+    if not isinstance(sample_validation, dict) or sample_validation.get("status") != "pass":
+        failures.append("missing_passing_sample_validation")
+    live_gray = _bitget_live_gray_evidence(profile)
+    if not isinstance(live_gray, dict) or live_gray.get("status") != "approved":
+        failures.append("missing_bitget_live_gray_approval")
+    if _bitget_approval_time(live_gray) is None:
+        failures.append("missing_bitget_live_gray_approval_time")
+    return {
+        "name": "bitget_live_profile",
+        "status": "pass" if not failures else "fail",
+        "message": "Bitget live profile has required gray evidence" if not failures else "Bitget live profile is incomplete",
+        "details": {
+            "profile_key": profile.get("profile_key"),
+            "failures": failures,
+            "sample_validation_status": sample_validation.get("status") if isinstance(sample_validation, dict) else None,
+            "bitget_live_gray_status": live_gray.get("status") if isinstance(live_gray, dict) else None,
+        },
+    }
+
+
+def _bitget_live_gray_evidence(profile: dict[str, Any] | None) -> dict[str, Any]:
+    if profile is None:
+        return {}
+    evidence = profile.get("evidence", {}) if isinstance(profile.get("evidence"), dict) else {}
+    live_gray = evidence.get("bitget_live_gray")
+    return live_gray if isinstance(live_gray, dict) else {}
+
+
+def _bitget_approval_time(live_gray: dict[str, Any]) -> float | None:
+    approved_at = live_gray.get("approved_at")
+    try:
+        return float(approved_at) if approved_at is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _bitget_canary_limit_check(config: RuntimeConfig) -> dict[str, Any]:
+    failures = []
+    if config.max_live_order_usdt > 5:
+        failures.append("bitget_live_canary_limit_exceeded")
+    return {
+        "name": "bitget_live_canary_limit",
+        "status": "pass" if not failures else "fail",
+        "message": "Bitget live canary is limited to 5U" if not failures else "Bitget live canary limit is too high",
+        "details": {
+            "failures": failures,
+            "max_live_order_usdt": config.max_live_order_usdt,
+            "max_bitget_canary_order_usdt": 5,
+        },
+    }
+
+
+def _bitget_canary_order_check(order: dict[str, Any] | None) -> dict[str, Any]:
+    failures: list[str] = []
+    status = str((order or {}).get("status") or "")
+    reason = str((order or {}).get("reason") or "")
+    safe_rejections = {
+        "no_signal",
+        "no_new_candle",
+        "position_already_open",
+        "no_size",
+        "cooldown_active",
+        "daily_trade_limit",
+        "daily_loss_limit",
+        "live_order_notional_exceeds_limit",
+        "exchange_rule_min_notional",
+        "exchange_rule_min_quantity",
+        "exchange_insufficient_balance",
+    }
+    if order is None:
+        failures.append("missing_bitget_live_canary_order")
+    elif status in {"submitted", "partially_filled"}:
+        failures.append("bitget_live_canary_order_still_open")
+    elif status == "rejected" and reason not in safe_rejections:
+        failures.append("bitget_live_canary_order_rejected_unsafely")
+    elif status not in {"filled", "canceled", "rejected"}:
+        failures.append("bitget_live_canary_order_status_unknown")
+    return {
+        "name": "bitget_live_canary_order",
+        "status": "pass" if not failures else "fail",
+        "message": "Bitget live canary order lifecycle is acceptable" if not failures else "Bitget live canary order lifecycle is blocked",
+        "details": {
+            "failures": failures,
+            "latest_order": order,
+        },
+    }
+
+
+def _bitget_open_order_cleanup_check(open_orders: list[dict[str, Any]]) -> dict[str, Any]:
+    failures = ["bitget_live_open_orders_require_cleanup"] if open_orders else []
+    return {
+        "name": "bitget_live_open_orders",
+        "status": "pass" if not failures else "fail",
+        "message": "Bitget live open orders are clean" if not failures else "Bitget live open orders require cleanup",
+        "details": {
+            "failures": failures,
+            "open_order_count": len(open_orders),
+            "open_orders": open_orders,
         },
     }
 
@@ -371,6 +550,43 @@ def _live_next_steps(
         steps.append(
             f"run one bounded live loop with KXIAN_LIVE_CONFIRMATION={expected_live_confirmation(config)} and a small KXIAN_MAX_LIVE_ORDER_USDT"
         )
+    return _dedupe(steps)
+
+
+def _bitget_live_next_steps(
+    config: RuntimeConfig,
+    readiness: dict[str, Any],
+    live_profile: dict[str, Any] | None,
+    latest_order: dict[str, Any] | None,
+    open_orders: list[dict[str, Any]],
+) -> list[str]:
+    steps: list[str] = []
+    if live_profile is None:
+        steps.append("run a Bitget live gray promotion after passing sample validation and approval evidence")
+    if readiness.get("status") != "pass":
+        steps.extend(readiness.get("next_steps", []))
+    if config.exchange != "bitget":
+        steps.append("set KXIAN_EXCHANGE=bitget for the Bitget live gray path")
+    if config.mode != "live":
+        steps.append("set KXIAN_MODE=live for Bitget live gray")
+    if config.use_testnet:
+        steps.append("set KXIAN_USE_TESTNET=false for Bitget live gray")
+    if config.max_live_order_usdt > 5:
+        steps.append("set KXIAN_MAX_LIVE_ORDER_USDT<=5 for the Bitget canary")
+    status = str((latest_order or {}).get("status") or "")
+    reason = str((latest_order or {}).get("reason") or "")
+    if status in {"submitted", "partially_filled"}:
+        steps.append("run kxian-bot order-status --order-id <exchange_order_id>")
+        steps.append("run kxian-bot cancel-order --order-id <exchange_order_id> if the order should not remain open")
+        steps.append("run kxian-bot sync-fills")
+        steps.append("rerun preflight after cleanup")
+    elif status == "rejected" and reason and reason not in {"no_signal", "no_new_candle", "position_already_open", "no_size", "cooldown_active", "daily_trade_limit", "daily_loss_limit", "live_order_notional_exceeds_limit", "exchange_rule_min_notional", "exchange_rule_min_quantity", "exchange_insufficient_balance"}:
+        steps.append("inspect the latest Bitget rejection reason and verify signing, permissions, and balance")
+    if open_orders:
+        steps.append("clear all Bitget open orders, sync fills, and rerun the checklist")
+    if not steps:
+        steps.append("ask the operator for explicit approval, then run exactly one bounded Bitget live canary with kxian-bot trade-loop --max-iterations 1 --sleep-seconds 0")
+        steps.append("after the canary, run order-status if needed, sync-fills, account-balance, and launch-checklist --target live before any longer loop")
     return _dedupe(steps)
 
 

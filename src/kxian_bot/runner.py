@@ -2075,10 +2075,13 @@ class TradingRunner:
             "use_testnet": self.config.use_testnet,
             "order_notional": round(order.quantity * order.price, 8),
             "max_live_order_usdt": self.config.max_live_order_usdt,
+            "exchange": self.config.exchange,
+            "max_live_canary_order_usdt": 5.0 if self.config.exchange == "bitget" else self.config.max_live_order_usdt,
         }
         if self.config.use_testnet:
             return {"allowed": False, "reason": "live_endpoint_points_to_testnet", "checks": checks}
-        if checks["order_notional"] > self.config.max_live_order_usdt:
+        limit = checks["max_live_canary_order_usdt"]
+        if checks["order_notional"] > limit:
             return {"allowed": False, "reason": "live_order_notional_exceeds_limit", "checks": checks}
         return {"allowed": True, "reason": "live_order_gate_passed", "checks": checks}
 

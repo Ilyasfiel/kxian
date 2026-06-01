@@ -11,6 +11,7 @@ from kxian_bot.testnet_dry_run import exchange_credential_status
 
 
 LIVE_CANARY_MAX_ORDER_USDT = 50.0
+BITGET_LIVE_CANARY_MAX_ORDER_USDT = 5.0
 
 
 def run_live_setup_check(
@@ -27,7 +28,7 @@ def run_live_setup_check(
     checks = [
         _credential_check(credential_failures, credential_presence),
         _readiness_check(readiness),
-        _launch_check(launch),
+        _launch_check(launch, live_config),
         _exchange_health_check(exchange_health),
         _endpoint_safety_check(live_config, exchange_health),
         _risk_limit_check(live_config),
@@ -53,7 +54,7 @@ def run_live_setup_check(
         },
         "risk_limits": {
             "max_live_order_usdt": live_config.max_live_order_usdt,
-            "max_live_canary_order_usdt": LIVE_CANARY_MAX_ORDER_USDT,
+            "max_live_canary_order_usdt": _canary_limit(live_config),
         },
         "checks": checks,
         "readiness": readiness,
@@ -102,11 +103,12 @@ def _readiness_check(readiness: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _launch_check(launch: dict[str, Any]) -> dict[str, Any]:
+def _launch_check(launch: dict[str, Any], config: RuntimeConfig) -> dict[str, Any]:
     failed = [check["name"] for check in launch.get("checks", []) if check.get("status") != "pass"]
     expected_phase = "ready_for_bounded_live_loop"
     phase = launch.get("phase")
-    failures = [] if launch.get("status") == "pass" and phase == expected_phase else ["live_launch_checklist_blocked"]
+    pre_canary_ready = _bitget_pre_canary_launch_ready(launch, config)
+    failures = [] if (launch.get("status") == "pass" and phase == expected_phase) or pre_canary_ready else ["live_launch_checklist_blocked"]
     return {
         "name": "launch_checklist",
         "status": "pass" if not failures else "fail",
@@ -117,8 +119,25 @@ def _launch_check(launch: dict[str, Any]) -> dict[str, Any]:
             "phase": phase,
             "reason": launch.get("reason"),
             "expected_phase": expected_phase,
+            "pre_canary_ready": pre_canary_ready,
         },
     }
+
+
+def _bitget_pre_canary_launch_ready(launch: dict[str, Any], config: RuntimeConfig) -> bool:
+    if config.exchange != "bitget":
+        return False
+    if launch.get("phase") != "blocked_before_bitget_live_canary":
+        return False
+    checks = launch.get("checks", [])
+    failed_checks = [check for check in checks if check.get("status") != "pass"]
+    if len(failed_checks) != 1:
+        return False
+    canary_check = failed_checks[0]
+    if canary_check.get("name") != "bitget_live_canary_order":
+        return False
+    failures = canary_check.get("details", {}).get("failures", [])
+    return failures == ["missing_bitget_live_canary_order"]
 
 
 def _exchange_health_check(exchange_health: dict[str, Any]) -> dict[str, Any]:
@@ -140,6 +159,8 @@ def _endpoint_safety_check(config: RuntimeConfig, exchange_health: dict[str, Any
         failures.append("live_trading_endpoint_is_testnet")
     if config.exchange == "binance" and endpoint and "api.binance.com" not in endpoint:
         failures.append("unexpected_binance_live_trading_endpoint")
+    if config.exchange == "bitget" and endpoint and "api.bitget.com" not in endpoint:
+        failures.append("unexpected_bitget_live_trading_endpoint")
     return {
         "name": "endpoint_safety",
         "status": "pass" if not failures else "fail",
@@ -154,7 +175,8 @@ def _endpoint_safety_check(config: RuntimeConfig, exchange_health: dict[str, Any
 
 def _risk_limit_check(config: RuntimeConfig) -> dict[str, Any]:
     failures: list[str] = []
-    if config.max_live_order_usdt > LIVE_CANARY_MAX_ORDER_USDT:
+    limit = _canary_limit(config)
+    if config.max_live_order_usdt > limit:
         failures.append("max_live_order_exceeds_canary_limit")
     return {
         "name": "live_canary_risk_limit",
@@ -163,7 +185,8 @@ def _risk_limit_check(config: RuntimeConfig) -> dict[str, Any]:
         "details": {
             "failures": failures,
             "max_live_order_usdt": config.max_live_order_usdt,
-            "max_live_canary_order_usdt": LIVE_CANARY_MAX_ORDER_USDT,
+            "max_live_canary_order_usdt": limit,
+            "exchange": config.exchange,
         },
     }
 
@@ -188,6 +211,10 @@ def _trading_endpoint(exchange_health: dict[str, Any]) -> str | None:
     return None
 
 
+def _canary_limit(config: RuntimeConfig) -> float:
+    return BITGET_LIVE_CANARY_MAX_ORDER_USDT if config.exchange == "bitget" else LIVE_CANARY_MAX_ORDER_USDT
+
+
 def _next_steps(
     config: RuntimeConfig,
     credential_failures: list[str],
@@ -210,7 +237,7 @@ def _next_steps(
     if any(check["name"] == "endpoint_safety" and check["status"] != "pass" for check in checks):
         steps.append("confirm KXIAN_USE_TESTNET=false and the live trading endpoint is production before any live canary")
     if any(check["name"] == "live_canary_risk_limit" and check["status"] != "pass" for check in checks):
-        steps.append(f"set KXIAN_MAX_LIVE_ORDER_USDT<={LIVE_CANARY_MAX_ORDER_USDT:g} for the first live canary")
+        steps.append(f"set KXIAN_MAX_LIVE_ORDER_USDT<={_canary_limit(config):g} for the first live canary")
     if not steps:
         steps.append("ask the operator for explicit approval, then run exactly one bounded live canary with kxian-bot trade-loop --max-iterations 1 --sleep-seconds 0")
         steps.append("after the canary, run order-status if needed, sync-fills, account-balance, and launch-checklist --target live before any longer loop")

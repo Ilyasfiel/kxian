@@ -69,13 +69,22 @@ def _credential_check(config: RuntimeConfig) -> dict[str, Any]:
                 failures.append("missing_binance_api_key")
             if not presence["binance_api_secret"]:
                 failures.append("missing_binance_api_secret")
-        else:
+        elif config.exchange == "okx":
             if not presence["okx_api_key"]:
                 failures.append("missing_okx_api_key")
             if not presence["okx_api_secret"]:
                 failures.append("missing_okx_api_secret")
             if not presence["okx_api_passphrase"]:
                 failures.append("missing_okx_api_passphrase")
+        elif config.exchange == "bitget":
+            if not presence["bitget_api_key"]:
+                failures.append("missing_bitget_api_key")
+            if not presence["bitget_api_secret"]:
+                failures.append("missing_bitget_api_secret")
+            if not presence["bitget_api_passphrase"]:
+                failures.append("missing_bitget_api_passphrase")
+        else:
+            failures.append("unsupported_exchange")
     return {
         "name": "credentials",
         "status": "pass" if not failures else "fail",
@@ -88,6 +97,8 @@ def _endpoint_check(config: RuntimeConfig) -> dict[str, Any]:
     failures: list[str] = []
     if config.mode == "testnet" and config.exchange == "binance" and not config.use_testnet:
         failures.append("binance_testnet_endpoint_required")
+    if config.mode == "testnet" and config.exchange == "bitget":
+        failures.append("bitget_testnet_not_supported")
     if config.mode == "live" and config.use_testnet:
         failures.append("live_mode_points_to_testnet")
     return {
@@ -100,6 +111,7 @@ def _endpoint_check(config: RuntimeConfig) -> dict[str, Any]:
             "exchange": config.exchange,
             "use_testnet": config.use_testnet,
             "okx_simulated_trading": config.exchange == "okx" and config.mode in {"testnet", "live"},
+            "bitget_live_only": config.exchange == "bitget",
         },
     }
 
@@ -119,6 +131,8 @@ def _automation_check(config: RuntimeConfig, *, require_testnet_autotrade: bool 
             failures.append("live_confirmation_required")
         if not config.live_credentials_confirmed:
             failures.append("live_credentials_not_confirmed")
+        if config.exchange == "bitget" and config.max_live_order_usdt > 5:
+            failures.append("bitget_live_canary_limit_exceeded")
     return {
         "name": "automation",
         "status": "pass" if not failures else "fail",
@@ -132,6 +146,7 @@ def _automation_check(config: RuntimeConfig, *, require_testnet_autotrade: bool 
             "live_confirmation_required": expected_live_confirmation(config) if config.mode == "live" else "",
             "live_credentials_confirmed": config.live_credentials_confirmed,
             "max_live_order_usdt": config.max_live_order_usdt,
+            "bitget_live_canary_limit": 5 if config.exchange == "bitget" else None,
         },
     }
 
@@ -165,7 +180,7 @@ def _risk_check(config: RuntimeConfig) -> dict[str, Any]:
 
 def _live_support_check(config: RuntimeConfig) -> dict[str, Any]:
     failures: list[str] = []
-    if config.mode == "live" and config.exchange not in {"binance", "okx"}:
+    if config.mode == "live" and config.exchange not in {"binance", "okx", "bitget"}:
         failures.append("live_exchange_not_supported")
     return {
         "name": "live_support",
@@ -199,6 +214,9 @@ def _credential_presence(config: RuntimeConfig) -> dict[str, bool]:
         "okx_api_key": bool(config.okx_api_key),
         "okx_api_secret": bool(config.okx_api_secret),
         "okx_api_passphrase": bool(config.okx_api_passphrase),
+        "bitget_api_key": bool(config.bitget_api_key),
+        "bitget_api_secret": bool(config.bitget_api_secret),
+        "bitget_api_passphrase": bool(config.bitget_api_passphrase),
     }
 
 
@@ -219,6 +237,10 @@ def _next_steps(config: RuntimeConfig, checks: list[dict[str, Any]], preflight: 
         steps.append(f"set KXIAN_LIVE_CONFIRMATION={expected_live_confirmation(config)} to explicitly confirm the live scope")
     if "live_credentials_not_confirmed" in failed:
         steps.append("set KXIAN_LIVE_CREDENTIALS_CONFIRMED=true only after production API keys are verified, withdrawal is disabled, and the key is not a testnet key")
+    if "bitget_testnet_not_supported" in failed:
+        steps.append("Bitget spot sandbox/demo is not confirmed; use KXIAN_MODE=live with live dry-run and 5U canary gates")
+    if "bitget_live_canary_limit_exceeded" in failed:
+        steps.append("set KXIAN_MAX_LIVE_ORDER_USDT<=5 for the Bitget first canary")
     if {"strategy_gate", "stress_gate", "walk_forward_gate"} & failed_preflight:
         steps.append("run backtest, stress-backtest, and walk-forward for the exact current strategy parameters")
     if "sample_validation_gate" in failed_preflight:

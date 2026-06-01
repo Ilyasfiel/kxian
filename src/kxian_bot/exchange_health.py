@@ -6,12 +6,13 @@ from typing import Any
 import requests
 
 from kxian_bot.config import RuntimeConfig
-from kxian_bot.market_data import BinanceMarketDataClient, OkxMarketDataClient, format_okx_symbol
+from kxian_bot.market_data import BitgetMarketDataClient, BinanceMarketDataClient, OkxMarketDataClient, format_okx_symbol
 
 
 BINANCE_PRODUCTION_URL = BinanceMarketDataClient.BASE_URL
 BINANCE_TESTNET_URL = BinanceMarketDataClient.TESTNET_URL
 OKX_URL = OkxMarketDataClient.BASE_URL
+BITGET_URL = BitgetMarketDataClient.BASE_URL
 
 
 def run_exchange_health_check(config: RuntimeConfig, timeout_seconds: float = 5.0) -> dict[str, Any]:
@@ -61,15 +62,31 @@ def _market_data_check(config: RuntimeConfig, timeout_seconds: float) -> dict[st
             required=True,
         )
 
-    url = f"{OKX_URL}/api/v5/market/candles"
-    params = {"instId": format_okx_symbol(config.symbol), "bar": config.interval, "limit": 1}
+    if config.exchange == "okx":
+        url = f"{OKX_URL}/api/v5/market/candles"
+        params = {"instId": format_okx_symbol(config.symbol), "bar": config.interval, "limit": 1}
+        return _json_get_check(
+            name="public_market_data",
+            url=url,
+            params=params,
+            timeout_seconds=timeout_seconds,
+            validator=lambda payload: isinstance(payload, dict)
+            and str(payload.get("code", "0")) == "0"
+            and len(payload.get("data", [])) > 0,
+            success_message="public exchange market data is reachable",
+            failure_message="public exchange market data is unreachable",
+            required=True,
+        )
+
+    url = f"{BITGET_URL}/api/v2/spot/market/candles"
+    params = {"symbol": config.symbol, "granularity": _format_bitget_health_interval(config.interval), "limit": 1}
     return _json_get_check(
         name="public_market_data",
         url=url,
         params=params,
         timeout_seconds=timeout_seconds,
         validator=lambda payload: isinstance(payload, dict)
-        and str(payload.get("code", "0")) == "0"
+        and str(payload.get("code", "00000")) == "00000"
         and len(payload.get("data", [])) > 0,
         success_message="public exchange market data is reachable",
         failure_message="public exchange market data is unreachable",
@@ -109,17 +126,38 @@ def _trading_endpoint_check(config: RuntimeConfig, timeout_seconds: float) -> di
             required=config.mode in {"testnet", "live"},
         )
 
-    url = f"{OKX_URL}/api/v5/public/time"
+    if config.exchange == "okx":
+        url = f"{OKX_URL}/api/v5/public/time"
+        return _json_get_check(
+            name="trading_endpoint",
+            url=url,
+            params={},
+            timeout_seconds=timeout_seconds,
+            validator=lambda payload: isinstance(payload, dict) and str(payload.get("code", "0")) == "0",
+            success_message="selected trading endpoint is reachable",
+            failure_message="selected trading endpoint is unreachable",
+            required=config.mode in {"testnet", "live"},
+        )
+
+    url = f"{BITGET_URL}/api/v2/public/time"
     return _json_get_check(
         name="trading_endpoint",
         url=url,
         params={},
         timeout_seconds=timeout_seconds,
-        validator=lambda payload: isinstance(payload, dict) and str(payload.get("code", "0")) == "0",
+        validator=lambda payload: isinstance(payload, dict)
+        and str(payload.get("code", "00000")) == "00000"
+        and isinstance(payload.get("data"), dict)
+        and "serverTime" in payload["data"],
         success_message="selected trading endpoint is reachable",
         failure_message="selected trading endpoint is unreachable",
         required=config.mode in {"testnet", "live"},
     )
+
+
+def _format_bitget_health_interval(interval: str) -> str:
+    mapping = {"1m": "1min", "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min", "1d": "1day", "1D": "1day"}
+    return mapping.get(interval, interval)
 
 
 def _json_get_check(

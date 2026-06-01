@@ -8,7 +8,7 @@ import requests
 
 from kxian_bot.brokers.live import LiveBrokerPlaceholder
 from kxian_bot.config import RuntimeConfig
-from kxian_bot.models import OrderRequest
+from kxian_bot.models import OrderRequest, SignedOrderRequest
 
 
 def test_live_broker_placeholder_rejects_without_network_call():
@@ -116,17 +116,22 @@ class FakeSession:
         self.response = response
         self.calls = []
 
+    def _next_response(self):
+        if isinstance(self.response, list):
+            return self.response[len(self.calls) - 1]
+        return self.response
+
     def post(self, url, headers=None, params=None, data=None, timeout=None):
         self.calls.append(("POST", url, headers, params, data, timeout))
-        return self.response
+        return self._next_response()
 
     def get(self, url, headers=None, params=None, timeout=None):
         self.calls.append(("GET", url, headers, params, None, timeout))
-        return self.response
+        return self._next_response()
 
     def delete(self, url, headers=None, params=None, data=None, timeout=None):
         self.calls.append(("DELETE", url, headers, params, data, timeout))
-        return self.response
+        return self._next_response()
 
 
 def test_binance_testnet_submit_order_uses_mock_http_and_maps_status():
@@ -529,6 +534,285 @@ def test_okx_trade_history_parses_fills():
     assert result.fills[0].timestamp == 1700000000000
     assert session.calls[0][0] == "GET"
     assert session.calls[0][1] == "https://www.okx.com/api/v5/trade/fills-history"
+
+
+def test_bitget_signed_live_order_request():
+    broker = LiveBrokerPlaceholder(
+        RuntimeConfig(
+            mode="live",
+            exchange="bitget",
+            allow_live=True,
+            use_testnet=False,
+            bitget_api_key="api-key",
+            bitget_api_secret="secret",
+            bitget_api_passphrase="passphrase",
+        )
+    )
+    order = OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.0001, price=50000)
+
+    request = broker.build_order_request(order, timestamp="1700000000000")
+
+    body = json.dumps(
+        {
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "orderType": "limit",
+            "force": "gtc",
+            "price": "50000",
+            "size": "0.0001",
+        },
+        separators=(",", ":"),
+    )
+    payload = f"1700000000000POST/api/v2/spot/trade/place-order{body}"
+    expected_signature = base64.b64encode(
+        hmac.new(b"secret", payload.encode("utf-8"), hashlib.sha256).digest()
+    ).decode("utf-8")
+
+    assert request.method == "POST"
+    assert request.url == "https://api.bitget.com/api/v2/spot/trade/place-order"
+    assert request.headers["ACCESS-KEY"] == "api-key"
+    assert request.headers["ACCESS-PASSPHRASE"] == "passphrase"
+    assert request.headers["ACCESS-SIGN"] == expected_signature
+    assert request.body == body
+    assert request.signature_payload == payload
+    dumped = request.model_dump_json()
+    assert "api-key" not in dumped
+    assert "passphrase" not in dumped
+    assert expected_signature not in dumped
+    assert payload not in dumped
+    assert "secret" not in dumped
+    assert "ACCESS-KEY" not in dumped or "<redacted>" in dumped
+
+
+def test_bitget_testnet_submit_order_is_blocked():
+    session = FakeSession(FakeResponse({"code": "00000", "data": {"orderId": "abc"}}))
+    broker = LiveBrokerPlaceholder(
+        RuntimeConfig(
+            mode="testnet",
+            exchange="bitget",
+            bitget_api_key="api-key",
+            bitget_api_secret="secret",
+            bitget_api_passphrase="passphrase",
+        ),
+        session=session,
+    )
+
+    result = broker.submit_order(OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.0001, price=50000))
+
+    assert result.status == "rejected"
+    assert result.reason == "bitget_testnet_not_supported"
+    assert session.calls == []
+
+
+def test_bitget_live_submit_order_uses_production_endpoint_after_confirmation():
+    session = FakeSession(
+        FakeResponse(
+            {
+                "code": "00000",
+                "data": {
+                    "symbol": "BTCUSDT",
+                    "orderId": "abc",
+                    "status": "live",
+                    "side": "buy",
+                    "size": "0.0001",
+                    "price": "50000",
+                },
+            }
+        )
+    )
+    broker = LiveBrokerPlaceholder(
+        RuntimeConfig(
+            mode="live",
+            exchange="bitget",
+            allow_live=True,
+            use_testnet=False,
+            live_dry_run=False,
+            enable_live_autotrade=True,
+            live_confirmation="LIVE:bitget:BTCUSDT:1m",
+            live_credentials_confirmed=True,
+            bitget_api_key="api-key",
+            bitget_api_secret="secret",
+            bitget_api_passphrase="passphrase",
+        ),
+        session=session,
+    )
+
+    result = broker.submit_order(OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.0001, price=50000))
+
+    assert result.status == "submitted"
+    assert result.exchange_order_id == "abc"
+    assert session.calls[0][0] == "POST"
+    assert session.calls[0][1] == "https://api.bitget.com/api/v2/spot/trade/place-order"
+    assert "ACCESS-SIGN" in session.calls[0][2]
+
+
+def test_bitget_order_status_cancel_balance_and_fills():
+    session = FakeSession(
+        [
+            FakeResponse(
+                {
+                    "code": "00000",
+                    "data": {
+                        "symbol": "BTCUSDT",
+                        "orderId": "abc",
+                        "status": "filled",
+                        "side": "buy",
+                        "dealSize": "0.0001",
+                        "dealFunds": "5",
+                        "price": "50000",
+                    },
+                }
+            ),
+            FakeResponse({"code": "00000", "data": {"orderId": "abc"}}),
+            FakeResponse({"code": "00000", "data": [{"coin": "BTC", "available": "0.01", "frozen": "0.001"}]}),
+            FakeResponse({"code": "00000", "data": [{"coin": "USDT", "available": "9", "frozen": "1"}]}),
+            FakeResponse(
+                {
+                    "code": "00000",
+                    "data": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "orderId": "abc",
+                            "tradeId": "trade-1",
+                            "side": "buy",
+                            "size": "0.0001",
+                            "price": "50000",
+                            "cTime": "1700000000000",
+                        }
+                    ],
+                }
+            ),
+        ]
+    )
+    broker = LiveBrokerPlaceholder(
+        RuntimeConfig(
+            mode="live",
+            exchange="bitget",
+            allow_live=True,
+            use_testnet=False,
+            bitget_api_key="api-key",
+            bitget_api_secret="secret",
+            bitget_api_passphrase="passphrase",
+        ),
+        session=session,
+    )
+
+    order = broker.order_status("BTCUSDT", "abc")
+    canceled = broker.cancel_order("BTCUSDT", "abc")
+    balance = broker.account_balance("BTCUSDT")
+    fills = broker.trade_history("BTCUSDT")
+
+    assert order.status == "filled"
+    assert order.quantity == 0.0001
+    assert order.price == pytest.approx(50000)
+    assert canceled.status == "canceled"
+    assert balance.status == "synced"
+    assert balance.asset_balance == 0.01
+    assert balance.asset_locked == 0.001
+    assert balance.usdt_balance == 9
+    assert balance.quote_locked == 1
+    assert fills.status == "synced"
+    assert fills.fills[0].exchange_trade_id == "trade-1"
+    assert [call[1] for call in session.calls] == [
+        "https://api.bitget.com/api/v2/spot/trade/orderInfo",
+        "https://api.bitget.com/api/v2/spot/trade/cancel-order",
+        "https://api.bitget.com/api/v2/spot/account/assets",
+        "https://api.bitget.com/api/v2/spot/account/assets",
+        "https://api.bitget.com/api/v2/spot/trade/fills",
+    ]
+    assert "secret" not in order.model_dump_json()
+    assert "secret" not in balance.model_dump_json()
+
+
+def test_bitget_api_errors_are_classified_without_secrets():
+    session = FakeSession(FakeResponse({"code": "40009", "msg": "signature invalid"}, status_code=400))
+    broker = LiveBrokerPlaceholder(
+        RuntimeConfig(
+            mode="live",
+            exchange="bitget",
+            allow_live=True,
+            use_testnet=False,
+            live_dry_run=False,
+            enable_live_autotrade=True,
+            live_confirmation="LIVE:bitget:BTCUSDT:1m",
+            live_credentials_confirmed=True,
+            bitget_api_key="api-key",
+            bitget_api_secret="secret",
+            bitget_api_passphrase="passphrase",
+        ),
+        session=session,
+    )
+
+    result = broker.submit_order(OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.0001, price=50000))
+
+    assert result.status == "rejected"
+    assert result.reason == "exchange_invalid_signature"
+    assert "secret" not in result.model_dump_json()
+
+
+def test_signed_order_request_redacts_sensitive_fields():
+    request = SignedOrderRequest(
+        method="POST",
+        url="https://api.bitget.com/api/v2/spot/trade/place-order",
+        headers={
+            "ACCESS-KEY": "api-key",
+            "ACCESS-SIGN": "signature",
+            "ACCESS-PASSPHRASE": "passphrase",
+            "Content-Type": "application/json",
+        },
+        params={"signature": "query-signature", "foo": "bar"},
+        body='{"hello":"world"}',
+        signature_payload="payload",
+    )
+
+    dumped = request.model_dump()
+
+    assert dumped["headers"]["ACCESS-KEY"] == "<redacted>"
+    assert dumped["headers"]["ACCESS-SIGN"] == "<redacted>"
+    assert dumped["headers"]["ACCESS-PASSPHRASE"] == "<redacted>"
+    assert dumped["params"]["signature"] == "<redacted>"
+    assert dumped["signature_payload"] == "<redacted>"
+
+
+def test_bitget_order_response_requires_order_id_and_known_status():
+    session = FakeSession(
+        [
+            FakeResponse({"code": "00000", "data": {"symbol": "BTCUSDT", "status": "live"}}),
+            FakeResponse({"code": "00000", "data": {"symbol": "BTCUSDT", "orderId": "abc", "status": "mystery"}}),
+            FakeResponse({"code": "00000", "data": {"symbol": "BTCUSDT", "orderId": "abc"}}),
+            FakeResponse({"code": "00000", "data": {}}),
+        ]
+    )
+    broker = LiveBrokerPlaceholder(
+        RuntimeConfig(
+            mode="live",
+            exchange="bitget",
+            allow_live=True,
+            use_testnet=False,
+            live_dry_run=False,
+            enable_live_autotrade=True,
+            live_confirmation="LIVE:bitget:BTCUSDT:1m",
+            live_credentials_confirmed=True,
+            bitget_api_key="api-key",
+            bitget_api_secret="secret",
+            bitget_api_passphrase="passphrase",
+        ),
+        session=session,
+    )
+
+    missing_id = broker.submit_order(OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.0001, price=50000))
+    unknown_status = broker.order_status("BTCUSDT", "abc")
+    missing_status = broker.order_status("BTCUSDT", "abc")
+    incomplete_cancel = broker.cancel_order("BTCUSDT", "")
+
+    assert missing_id.status == "rejected"
+    assert missing_id.reason == "exchange_response_incomplete"
+    assert unknown_status.status == "rejected"
+    assert unknown_status.exchange_order_id == "abc"
+    assert missing_status.status == "rejected"
+    assert missing_status.reason == "exchange_response_incomplete"
+    assert incomplete_cancel.status == "rejected"
+    assert incomplete_cancel.reason == "exchange_cancel_response_incomplete"
 
 
 def test_http_error_is_redacted():

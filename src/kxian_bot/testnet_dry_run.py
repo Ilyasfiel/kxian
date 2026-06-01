@@ -312,6 +312,9 @@ def exchange_credential_status(config: RuntimeConfig) -> tuple[list[str], dict[s
         "okx_api_key": bool(config.okx_api_key),
         "okx_api_secret": bool(config.okx_api_secret),
         "okx_api_passphrase": bool(config.okx_api_passphrase),
+        "bitget_api_key": bool(config.bitget_api_key),
+        "bitget_api_secret": bool(config.bitget_api_secret),
+        "bitget_api_passphrase": bool(config.bitget_api_passphrase),
     }
     failures: list[str] = []
     if config.exchange == "binance":
@@ -319,13 +322,22 @@ def exchange_credential_status(config: RuntimeConfig) -> tuple[list[str], dict[s
             failures.append("missing_binance_api_key")
         if not presence["binance_api_secret"]:
             failures.append("missing_binance_api_secret")
-    else:
+    elif config.exchange == "okx":
         if not presence["okx_api_key"]:
             failures.append("missing_okx_api_key")
         if not presence["okx_api_secret"]:
             failures.append("missing_okx_api_secret")
         if not presence["okx_api_passphrase"]:
             failures.append("missing_okx_api_passphrase")
+    elif config.exchange == "bitget":
+        if not presence["bitget_api_key"]:
+            failures.append("missing_bitget_api_key")
+        if not presence["bitget_api_secret"]:
+            failures.append("missing_bitget_api_secret")
+        if not presence["bitget_api_passphrase"]:
+            failures.append("missing_bitget_api_passphrase")
+    else:
+        failures.append("unsupported_exchange")
     return failures, presence
 
 

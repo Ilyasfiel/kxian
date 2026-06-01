@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 
+from kxian_bot.bitget_live_gray import approve_bitget_live_gray
 from kxian_bot.brokers.base import create_broker
 from kxian_bot.config import load_config
 from kxian_bot.dashboard import run_dashboard
@@ -15,7 +16,7 @@ from kxian_bot.evidence import build_testnet_evidence, write_evidence
 from kxian_bot.exchange_health import run_exchange_health_check
 from kxian_bot.launch_checklist import run_launch_checklist
 from kxian_bot.live_setup import run_live_setup_check
-from kxian_bot.market_data import MarketDataError
+from kxian_bot.market_data import MarketDataError, fetch_bitget_trading_rule
 from kxian_bot.models import OrderRequest, TradingRule
 from kxian_bot.preflight import run_preflight
 from kxian_bot.readiness import run_readiness
@@ -44,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--timeout-seconds", type=float, default=5.0)
     live_setup_parser = subparsers.add_parser("live-setup-check")
     live_setup_parser.add_argument("--timeout-seconds", type=float, default=5.0)
+    bitget_live_gray_parser = subparsers.add_parser("approve-bitget-live-gray")
+    bitget_live_gray_parser.add_argument("--updated-by", type=str, default="cli")
+    bitget_live_gray_parser.add_argument("--confirmation", type=str, required=True)
     pause_parser = subparsers.add_parser("pause")
     pause_parser.add_argument("--reason", type=str, default="manual_pause")
     pause_parser.add_argument("--updated-by", type=str, default="cli")
@@ -278,7 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     promote_live_profile_parser.add_argument("--updated-by", type=str, default="cli")
 
     history_parser = subparsers.add_parser("download-history")
-    history_parser.add_argument("--exchange", choices=["binance", "okx"], default=None)
+    history_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], default=None)
     history_parser.add_argument("--symbol", type=str, default=None)
     history_parser.add_argument("--interval", type=str, default=None)
     history_parser.add_argument("--start", required=True)
@@ -288,20 +292,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_parser = subparsers.add_parser("import-candles")
     import_parser.add_argument("--input-file", required=True)
-    import_parser.add_argument("--exchange", choices=["binance", "okx"], default=None)
+    import_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], default=None)
     import_parser.add_argument("--symbol", type=str, default=None)
     import_parser.add_argument("--interval", type=str, default=None)
 
     import_archives_parser = subparsers.add_parser("import-candle-archives")
     import_archives_parser.add_argument("--input-dir", required=True)
-    import_archives_parser.add_argument("--exchange", choices=["binance", "okx"], default=None)
+    import_archives_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], default=None)
     import_archives_parser.add_argument("--symbol", type=str, default=None)
     import_archives_parser.add_argument("--interval", type=str, default=None)
     import_archives_parser.add_argument("--pattern", type=str, default="*.zip")
     import_archives_parser.add_argument("--recursive", action="store_true")
 
     prepare_samples_parser = subparsers.add_parser("prepare-samples")
-    prepare_samples_parser.add_argument("--exchange", choices=["binance", "okx"], default=None)
+    prepare_samples_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], default=None)
     prepare_samples_parser.add_argument("--symbol", type=str, default=None)
     prepare_samples_parser.add_argument("--interval", type=str, default=None)
     prepare_samples_parser.add_argument("--start", required=True)
@@ -314,7 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_samples_parser.add_argument("--min-candles", type=int, default=1)
 
     research_parser = subparsers.add_parser("research-strategy")
-    research_parser.add_argument("--exchange", choices=["binance", "okx"], default=None)
+    research_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], default=None)
     research_parser.add_argument("--symbol", type=str, default=None)
     research_parser.add_argument("--interval", type=str, default=None)
     research_parser.add_argument("--start", required=True)
@@ -367,15 +371,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     rules_parser = subparsers.add_parser("trading-rules")
-    rules_parser.add_argument("--exchange", choices=["binance", "okx"], default=None)
+    rules_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], default=None)
     rules_parser.add_argument("--symbol", type=str, default=None)
     rules_parser.add_argument("--price-step", type=float, default=None)
     rules_parser.add_argument("--quantity-step", type=float, default=None)
     rules_parser.add_argument("--min-quantity", type=float, default=None)
     rules_parser.add_argument("--min-notional", type=float, default=None)
+    rules_parser.add_argument("--refresh-from-exchange", action="store_true")
 
     batch_parser = subparsers.add_parser("batch-backtest")
-    batch_parser.add_argument("--exchange", choices=["binance", "okx"], default=None)
+    batch_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], default=None)
     batch_parser.add_argument("--symbol", type=str, default=None)
     batch_parser.add_argument("--interval", type=str, default=None)
     batch_parser.add_argument("--start", required=True)
@@ -473,6 +478,7 @@ def main() -> None:
         "testnet-dry-run",
         "testnet-observe",
         "testnet-setup-check",
+        "approve-bitget-live-gray",
         "trade-loop",
     }
     config = load_config(validate_execution=False) if args.command in relaxed_config_commands else load_config()
@@ -482,6 +488,10 @@ def main() -> None:
             config = config.model_copy(update={"exchange": args.exchange})
 
         if args.command == "run-once":
+            bitget_run_once_gate = _bitget_live_run_once_gate(config)
+            if bitget_run_once_gate is not None:
+                print(json.dumps(bitget_run_once_gate, ensure_ascii=False))
+                raise SystemExit(2)
             gate = _runtime_launch_gate(config, require_observed_testnet=False)
             if gate is not None:
                 print(json.dumps(gate, ensure_ascii=False))
@@ -545,6 +555,17 @@ def main() -> None:
                 raise SystemExit(2)
             return
 
+        if args.command == "approve-bitget-live-gray":
+            result = approve_bitget_live_gray(
+                config,
+                updated_by=args.updated_by,
+                confirmation=args.confirmation,
+            )
+            print(json.dumps(result, ensure_ascii=False))
+            if result["status"] != "pass":
+                raise SystemExit(2)
+            return
+
         if args.command == "pause":
             storage = SQLiteStorage(config.db_path)
             status = storage.set_automation_paused(
@@ -584,6 +605,10 @@ def main() -> None:
             return
 
         if args.command == "trade-loop":
+            bitget_iteration_gate = _bitget_live_iteration_gate(config, args.max_iterations)
+            if bitget_iteration_gate is not None:
+                print(json.dumps(bitget_iteration_gate, ensure_ascii=False))
+                raise SystemExit(2)
             gate = _runtime_launch_gate(config, require_observed_testnet=args.max_iterations is None)
             if gate is not None:
                 print(json.dumps(gate, ensure_ascii=False))
@@ -973,19 +998,35 @@ def main() -> None:
         if args.command == "trading-rules":
             storage = SQLiteStorage(config.db_path)
             symbol = args.symbol or config.symbol
+            exchange_rules = {}
+            if args.refresh_from_exchange:
+                if config.exchange != "bitget":
+                    print(
+                        json.dumps(
+                            {
+                                "status": "blocked",
+                                "reason": "exchange_rule_refresh_not_supported",
+                                "exchange": config.exchange,
+                                "supported_exchanges": ["bitget"],
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                    raise SystemExit(2)
+                exchange_rules = fetch_bitget_trading_rule(symbol)
             current = storage.latest_trading_rule(config.exchange, symbol) or {}
             rule = TradingRule(
                 exchange=config.exchange,
                 symbol=symbol,
-                price_step=args.price_step if args.price_step is not None else float(current.get("price_step", config.price_step)),
-                quantity_step=args.quantity_step if args.quantity_step is not None else float(current.get("quantity_step", config.quantity_step)),
-                min_quantity=args.min_quantity if args.min_quantity is not None else float(current.get("min_quantity", config.min_exchange_quantity)),
-                min_notional=args.min_notional if args.min_notional is not None else float(current.get("min_notional", config.min_exchange_notional)),
+                price_step=args.price_step if args.price_step is not None else float(exchange_rules.get("price_step", current.get("price_step", config.price_step))),
+                quantity_step=args.quantity_step if args.quantity_step is not None else float(exchange_rules.get("quantity_step", current.get("quantity_step", config.quantity_step))),
+                min_quantity=args.min_quantity if args.min_quantity is not None else float(exchange_rules.get("min_quantity", current.get("min_quantity", config.min_exchange_quantity))),
+                min_notional=args.min_notional if args.min_notional is not None else float(exchange_rules.get("min_notional", current.get("min_notional", config.min_exchange_notional))),
             )
             if any(
                 value is not None
                 for value in [args.price_step, args.quantity_step, args.min_quantity, args.min_notional]
-            ):
+            ) or args.refresh_from_exchange:
                 storage.upsert_trading_rule(rule)
             print(json.dumps(rule.model_dump(), ensure_ascii=False))
             return
@@ -1016,6 +1057,10 @@ def main() -> None:
             return
 
         if args.command == "test-order":
+            bitget_test_order_gate = _bitget_live_test_order_gate(config)
+            if bitget_test_order_gate is not None:
+                print(json.dumps(bitget_test_order_gate, ensure_ascii=False))
+                raise SystemExit(2)
             broker = create_broker(config)
             storage = SQLiteStorage(config.db_path)
             order = OrderRequest(
@@ -1132,6 +1177,7 @@ def _runtime_launch_gate(config, require_observed_testnet: bool) -> dict | None:
     checklist = run_launch_checklist(config, target_mode=config.mode)
     required_phase = _required_launch_phase(config.mode, require_observed_testnet)
     checklist_ready = checklist.get("status") == "pass" and _phase_ready(checklist.get("phase"), required_phase)
+    checklist_ready = checklist_ready or _bitget_first_canary_ready(config, checklist)
     if not checklist_ready:
         return {
             "status": "error",
@@ -1175,6 +1221,76 @@ def _phase_ready(phase: object, required_phase: str) -> bool:
     if required_phase == "ready_for_bounded_testnet_order_observation":
         return phase == "testnet_observed_ready_for_live_review"
     return False
+
+
+def _bitget_live_iteration_gate(config, max_iterations: int | None) -> dict | None:
+    if config.mode != "live" or config.exchange != "bitget":
+        return None
+    if max_iterations == 1:
+        return None
+    return {
+        "status": "blocked",
+        "reason": "bitget_live_canary_single_iteration_required",
+        "mode": config.mode,
+        "exchange": config.exchange,
+        "symbol": config.symbol,
+        "interval": config.interval,
+        "max_iterations": max_iterations,
+        "required_max_iterations": 1,
+        "next_steps": [
+            "rerun Bitget live canary with kxian-bot trade-loop --max-iterations 1 --sleep-seconds 0",
+            "do not start an unbounded or multi-iteration Bitget live loop during the gray phase",
+        ],
+    }
+
+
+def _bitget_live_test_order_gate(config) -> dict | None:
+    if config.mode != "live" or config.exchange != "bitget":
+        return None
+    return {
+        "status": "blocked",
+        "reason": "bitget_live_test_order_disabled",
+        "mode": config.mode,
+        "exchange": config.exchange,
+        "symbol": config.symbol,
+        "interval": config.interval,
+        "next_steps": [
+            "use kxian-bot live-setup-check before the Bitget canary",
+            "run the Bitget canary only through kxian-bot trade-loop --max-iterations 1 --sleep-seconds 0",
+        ],
+    }
+
+
+def _bitget_live_run_once_gate(config) -> dict | None:
+    if config.mode != "live" or config.exchange != "bitget":
+        return None
+    return {
+        "status": "blocked",
+        "reason": "bitget_live_run_once_disabled",
+        "mode": config.mode,
+        "exchange": config.exchange,
+        "symbol": config.symbol,
+        "interval": config.interval,
+        "next_steps": [
+            "run Bitget live canary only with kxian-bot trade-loop --max-iterations 1 --sleep-seconds 0",
+            "do not use run-once for Bitget live gray execution",
+        ],
+    }
+
+
+def _bitget_first_canary_ready(config, checklist: dict) -> bool:
+    if config.mode != "live" or config.exchange != "bitget":
+        return False
+    if checklist.get("phase") != "blocked_before_bitget_live_canary":
+        return False
+    failed_checks = [check for check in checklist.get("checks", []) if check.get("status") != "pass"]
+    if len(failed_checks) != 1:
+        return False
+    check = failed_checks[0]
+    if check.get("name") != "bitget_live_canary_order":
+        return False
+    failures = check.get("details", {}).get("failures", [])
+    return failures == ["missing_bitget_live_canary_order"]
 
 
 def _paper_dry_run_evidence(storage: SQLiteStorage, config) -> dict:

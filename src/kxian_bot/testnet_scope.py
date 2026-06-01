@@ -55,6 +55,41 @@ def testnet_closed_loop_next_steps(failures: list[str]) -> list[str]:
     return [mapping[failure] for failure in failures if failure in mapping]
 
 
+def bitget_live_gray_scope_failures(config: RuntimeConfig) -> list[str]:
+    failures: list[str] = []
+    if config.exchange != "bitget":
+        failures.append("bitget_exchange_required")
+    if config.mode != "live":
+        failures.append("live_mode_required")
+    if config.use_testnet:
+        failures.append("live_endpoint_required")
+    if not config.allow_live:
+        failures.append("live_allow_required")
+    if not config.enable_live_autotrade:
+        failures.append("live_autotrade_required")
+    if config.live_dry_run:
+        failures.append("live_dry_run_must_be_disabled")
+    if config.live_confirmation != f"LIVE:{config.exchange}:{config.symbol}:{config.interval}":
+        failures.append("live_confirmation_required")
+    if not config.live_credentials_confirmed:
+        failures.append("live_credentials_confirmed_required")
+    return failures
+
+
+def bitget_live_gray_next_steps(failures: list[str]) -> list[str]:
+    mapping = {
+        "bitget_exchange_required": "set KXIAN_EXCHANGE=bitget",
+        "live_mode_required": "set KXIAN_MODE=live",
+        "live_endpoint_required": "set KXIAN_USE_TESTNET=false",
+        "live_allow_required": "set KXIAN_ALLOW_LIVE=true",
+        "live_autotrade_required": "set KXIAN_ENABLE_LIVE_AUTOTRADE=true",
+        "live_dry_run_must_be_disabled": "set KXIAN_LIVE_DRY_RUN=false",
+        "live_confirmation_required": "set KXIAN_LIVE_CONFIRMATION=LIVE:bitget:BTCUSDT:4h",
+        "live_credentials_confirmed_required": "set KXIAN_LIVE_CREDENTIALS_CONFIRMED=true after verifying production Bitget API permissions",
+    }
+    return [mapping[failure] for failure in failures if failure in mapping]
+
+
 def testnet_observation_failures(
     observation: dict[str, Any] | None,
     *,

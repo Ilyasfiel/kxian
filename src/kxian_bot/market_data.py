@@ -108,6 +108,8 @@ def load_klines_from_file(path: str) -> list[Candle]:
         return parse_csv_klines(path)
     with open(path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
+    if isinstance(payload, dict) and str(payload.get("code", "")) == "00000":
+        return BitgetMarketDataClient.parse_klines(payload)
     if isinstance(payload, dict) and "data" in payload:
         return OkxMarketDataClient.parse_klines(payload)
     if isinstance(payload, list):
@@ -501,6 +503,178 @@ class OkxMarketDataClient:
             raise MarketDataError(f"OKX returned error: {payload.get('msg', 'unknown_error')}")
 
 
+class BitgetMarketDataClient:
+    BASE_URL = "https://api.bitget.com"
+    MAX_HISTORICAL_LIMIT = 200
+
+    def fetch_klines(self, symbol: str, interval: str, limit: int = 200) -> list[Candle]:
+        return self._request_klines(symbol, interval, limit=limit)
+
+    def fetch_historical_klines(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: int,
+        end_time: int,
+        limit_per_request: int | None = None,
+        sleep_seconds: float = 0.0,
+    ) -> list[Candle]:
+        _validate_time_range(start_time, end_time)
+        interval_ms = interval_to_milliseconds(interval)
+        limit = _clamp_limit(limit_per_request, self.MAX_HISTORICAL_LIMIT)
+        end_cursor = end_time + interval_ms
+        candles_by_open_time: dict[int, Candle] = {}
+
+        while end_cursor > start_time:
+            page = self._request_history_klines(symbol, interval, limit=limit, end_time=end_cursor)
+            page = _clean_candles(page, start_time, end_time)
+            if not page:
+                break
+
+            for candle in page:
+                candles_by_open_time[candle.open_time] = candle
+
+            earliest_open_time = page[0].open_time
+            if earliest_open_time <= start_time:
+                break
+            end_cursor = earliest_open_time
+
+            if len(page) < limit:
+                break
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
+
+        return [candles_by_open_time[key] for key in sorted(candles_by_open_time)]
+
+    def _request_klines(self, symbol: str, interval: str, limit: int) -> list[Candle]:
+        try:
+            response = requests.get(
+                f"{self.BASE_URL}/api/v2/spot/market/candles",
+                params={"symbol": symbol, "granularity": _format_bitget_interval(interval), "limit": limit},
+                timeout=10,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise MarketDataError(f"Failed to fetch klines from Bitget: {exc}") from exc
+        payload = response.json()
+        self._raise_for_bitget_error(payload)
+        return self.parse_klines(payload)
+
+    def _request_history_klines(self, symbol: str, interval: str, limit: int, end_time: int) -> list[Candle]:
+        try:
+            response = requests.get(
+                f"{self.BASE_URL}/api/v2/spot/market/history-candles",
+                params={
+                    "symbol": symbol,
+                    "granularity": _format_bitget_interval(interval),
+                    "limit": limit,
+                    "endTime": str(end_time),
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise MarketDataError(f"Failed to fetch historical klines from Bitget: {exc}") from exc
+        payload = response.json()
+        self._raise_for_bitget_error(payload)
+        return self.parse_klines(payload)
+
+    @staticmethod
+    def load_klines_from_file(path: str) -> list[Candle]:
+        return load_klines_from_file(path)
+
+    @staticmethod
+    def parse_klines(payload: dict[str, Any]) -> list[Candle]:
+        candles: list[Candle] = []
+        for item in payload.get("data", []):
+            timestamp = int(item[0])
+            candles.append(
+                Candle(
+                    open_time=timestamp,
+                    open=float(item[1]),
+                    high=float(item[2]),
+                    low=float(item[3]),
+                    close=float(item[4]),
+                    volume=float(item[5]),
+                    close_time=timestamp,
+                )
+            )
+        return sorted(candles, key=lambda candle: candle.open_time)
+
+    @staticmethod
+    def _raise_for_bitget_error(payload: dict[str, Any]) -> None:
+        if str(payload.get("code", "00000")) != "00000":
+            raise MarketDataError(f"Bitget returned error: {payload.get('msg', 'unknown_error')}")
+
+
+def _format_bitget_interval(interval: str) -> str:
+    mapping = {
+        "1m": "1min",
+        "3m": "3min",
+        "5m": "5min",
+        "15m": "15min",
+        "30m": "30min",
+        "1h": "1h",
+        "2h": "2h",
+        "4h": "4h",
+        "6h": "6h",
+        "12h": "12h",
+        "1d": "1day",
+        "1D": "1day",
+        "1w": "1week",
+        "1W": "1week",
+    }
+    return mapping.get(interval, interval)
+
+
+def fetch_bitget_trading_rule(symbol: str) -> dict[str, float]:
+    try:
+        response = requests.get(
+            f"{BitgetMarketDataClient.BASE_URL}/api/v2/spot/public/symbols",
+            params={"symbol": symbol},
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise MarketDataError(f"Failed to fetch trading rules from Bitget: {exc}") from exc
+    payload = response.json()
+    BitgetMarketDataClient._raise_for_bitget_error(payload)
+    data = payload.get("data", [])
+    item = data[0] if isinstance(data, list) and data else {}
+    if not isinstance(item, dict):
+        raise MarketDataError("Bitget symbol response is missing rule data")
+    price_precision = _required_int_field(item, "pricePrecision")
+    quantity_precision = _required_int_field(item, "quantityPrecision")
+    min_trade_amount = _required_float_field(item, "minTradeAmount")
+    min_trade_usdt = _required_float_field(item, "minTradeUSDT")
+    return {
+        "price_step": 10 ** (-price_precision),
+        "quantity_step": 10 ** (-quantity_precision),
+        "min_quantity": min_trade_amount,
+        "min_notional": min_trade_usdt,
+    }
+
+
+def _required_int_field(item: dict[str, Any], field: str) -> int:
+    value = item.get(field)
+    if value in {None, ""}:
+        raise MarketDataError(f"Bitget symbol response is missing {field}")
+    try:
+        return int(float(value))
+    except (TypeError, ValueError) as exc:
+        raise MarketDataError(f"Bitget symbol response has invalid {field}") from exc
+
+
+def _required_float_field(item: dict[str, Any], field: str) -> float:
+    value = item.get(field)
+    if value in {None, ""}:
+        raise MarketDataError(f"Bitget symbol response is missing {field}")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise MarketDataError(f"Bitget symbol response has invalid {field}") from exc
+
+
 class SQLiteReplayMarketDataClient:
     def __init__(self, storage: SQLiteStorage, exchange: Exchange) -> None:
         self.storage = storage
@@ -544,6 +718,8 @@ def create_market_data_client(exchange: Exchange, use_testnet: bool = False) -> 
         return BinanceMarketDataClient(use_testnet=use_testnet)
     if exchange == "okx":
         return OkxMarketDataClient()
+    if exchange == "bitget":
+        return BitgetMarketDataClient()
     raise MarketDataError(f"Unsupported exchange: {exchange}")
 
 
