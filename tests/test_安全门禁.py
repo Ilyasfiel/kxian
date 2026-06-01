@@ -13,6 +13,7 @@ def test_gitignore_protects_runtime_secrets_and_evidence_artifacts():
 def test_ci_runs_tests_compile_and_offline_smoke():
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
+    assert "python -m playwright install --with-deps chromium" in workflow
     assert "python -m pytest -v" in workflow
     assert "python -m compileall src/kxian_bot" in workflow
     assert "paper-dry-run --input-file sample_data/ohlcv_smoke.csv" in workflow
@@ -39,3 +40,20 @@ def test_chinese_docs_record_testnet_acceptance_without_live_steps():
         commands = block.split("```", 1)[0]
         assert "launch-checklist --target live" not in commands
         assert "promote-profile-to-live" not in commands
+
+
+def test_chinese_release_notes_and_evidence_spec_record_boundaries():
+    release_notes = Path("docs/测试网闭环版本发布说明.md").read_text(encoding="utf-8")
+    evidence_spec = Path("docs/测试网证据包规范.md").read_text(encoding="utf-8")
+
+    assert "v0.1.0-testnet" in release_notes
+    assert "0c97babc2a2448e9f49dfc0108f83bbd4f81add6" in release_notes
+    assert "GitHub CI" in release_notes
+    assert "Success" in release_notes
+    assert "不表示实盘可直接启动" in release_notes
+    assert "不读取、回显或提交 `.env`" in release_notes
+    assert "kxian.testnet.evidence.v1" in evidence_spec
+    assert "live_ready=false" in evidence_spec
+    assert "credentials.present" in evidence_spec
+    assert "X-MBX-APIKEY" in evidence_spec
+    assert "signature" in evidence_spec

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from kxian_bot.config import RuntimeConfig
@@ -10,15 +11,53 @@ from kxian_bot.storage import SQLiteStorage
 from kxian_bot.testnet_dry_run import exchange_credential_status
 
 
+TESTNET_EVIDENCE_SCHEMA = "kxian.testnet.evidence.v1"
+TESTNET_EVIDENCE_SCHEMA_VERSION = 1
+TESTNET_EVIDENCE_TOP_LEVEL_KEYS = frozenset(
+    {
+        "schema",
+        "schema_version",
+        "generated_at",
+        "command",
+        "scope",
+        "credentials",
+        "profile",
+        "observations",
+        "launch_checklist",
+        "result",
+        "acceptance",
+        "redaction",
+        "safety",
+    }
+)
+TESTNET_EVIDENCE_REQUIRED_KEYS = TESTNET_EVIDENCE_TOP_LEVEL_KEYS
+TESTNET_SCOPE = {
+    "mode": "testnet",
+    "exchange": "binance",
+    "symbol": "BTCUSDT",
+    "interval": "4h",
+    "use_testnet": True,
+}
 SENSITIVE_KEY_PARTS = (
     "api_key",
     "apikey",
+    "authorization",
+    "cookie",
+    "headers",
+    "signature",
     "secret",
     "passphrase",
     "password",
     "token",
 )
 REDACTED = "<redacted>"
+SENSITIVE_TEXT_PATTERNS = (
+    re.compile(r"(?i)(authorization\s*[:=]\s*)(bearer\s+)?[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)(x-mbx-apikey\s*[:=]\s*)[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)(signature\s*[:=]\s*)[A-Fa-f0-9]{16,}"),
+    re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)(api[_-]?secret\s*[:=]\s*)[A-Za-z0-9._~+/=-]{8,}"),
+)
 
 
 def redact_for_evidence(value: Any, sensitive_values: list[str] | None = None) -> Any:
@@ -79,9 +118,12 @@ def build_testnet_evidence(
         execute_loop=True,
     )
     profile_evidence = profile.get("evidence", {}) if isinstance(profile, dict) else {}
-    return redact_for_evidence(
+    launch_phase = launch_checklist.get("phase") if isinstance(launch_checklist, dict) else None
+    launch_status = launch_checklist.get("status") if isinstance(launch_checklist, dict) else None
+    evidence = redact_for_evidence(
         {
-            "schema": "kxian.testnet.evidence.v1",
+            "schema": TESTNET_EVIDENCE_SCHEMA,
+            "schema_version": TESTNET_EVIDENCE_SCHEMA_VERSION,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "command": command,
             "scope": _config_scope(testnet_config),
@@ -93,14 +135,83 @@ def build_testnet_evidence(
             },
             "launch_checklist": launch_checklist,
             "result": result,
+            "acceptance": {
+                "required_status": "pass",
+                "required_phase": "testnet_observed_ready_for_live_review",
+                "status": launch_status,
+                "phase": launch_phase,
+                "ready_for_live_review": launch_status == "pass" and launch_phase == "testnet_observed_ready_for_live_review",
+                "live_ready": False,
+            },
+            "redaction": {
+                "credential_values": "redacted",
+                "credential_presence": "boolean_only",
+                "sensitive_headers": "redacted",
+                "signatures": "redacted",
+            },
             "safety": {
                 "live_promote_executed": False,
                 "live_loop_executed": False,
                 "live_checklist_required": False,
+                "production_credentials_allowed": False,
             },
         },
         sensitive_values=sensitive_values,
     )
+    return evidence
+
+
+def testnet_evidence_contract_failures(evidence: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    keys = set(evidence)
+    missing = TESTNET_EVIDENCE_REQUIRED_KEYS - keys
+    extra = keys - TESTNET_EVIDENCE_TOP_LEVEL_KEYS
+    if missing:
+        failures.append(f"missing_top_level_keys:{','.join(sorted(missing))}")
+    if extra:
+        failures.append(f"unexpected_top_level_keys:{','.join(sorted(extra))}")
+    if evidence.get("schema") != TESTNET_EVIDENCE_SCHEMA:
+        failures.append("invalid_schema")
+    if evidence.get("schema_version") != TESTNET_EVIDENCE_SCHEMA_VERSION:
+        failures.append("invalid_schema_version")
+    scope = evidence.get("scope")
+    if not isinstance(scope, dict):
+        failures.append("missing_scope")
+    else:
+        for key, expected in TESTNET_SCOPE.items():
+            if scope.get(key) != expected:
+                failures.append(f"invalid_scope:{key}")
+        if scope.get("allow_live") is not False:
+            failures.append("allow_live_must_be_false")
+        if scope.get("live_dry_run") is not True:
+            failures.append("live_dry_run_must_be_true")
+        if scope.get("enable_live_autotrade") is not False:
+            failures.append("enable_live_autotrade_must_be_false")
+        if scope.get("live_confirmation_present") is not False:
+            failures.append("live_confirmation_present_must_be_false")
+    credentials = evidence.get("credentials")
+    if not isinstance(credentials, dict) or not isinstance(credentials.get("present"), dict):
+        failures.append("invalid_credentials")
+    else:
+        for key, value in credentials["present"].items():
+            if not isinstance(value, bool):
+                failures.append(f"credential_presence_must_be_boolean:{key}")
+    safety = evidence.get("safety")
+    if not isinstance(safety, dict):
+        failures.append("missing_safety")
+    else:
+        for key, value in safety.items():
+            if value is not False:
+                failures.append(f"safety_flag_must_be_false:{key}")
+    acceptance = evidence.get("acceptance")
+    if not isinstance(acceptance, dict):
+        failures.append("missing_acceptance")
+    elif acceptance.get("live_ready") is not False:
+        failures.append("acceptance_live_ready_must_be_false")
+    return failures
+
+
+testnet_evidence_contract_failures.__test__ = False
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -118,6 +229,8 @@ def _redact_sensitive_text(text: str, sensitive_values: list[str]) -> str:
     for secret in sorted(set(sensitive_values), key=len, reverse=True):
         if secret and secret in redacted:
             redacted = redacted.replace(secret, REDACTED)
+    for pattern in SENSITIVE_TEXT_PATTERNS:
+        redacted = pattern.sub(lambda match: f"{match.group(1)}{REDACTED}", redacted)
     return redacted
 
 
@@ -140,6 +253,10 @@ def _testnet_config(config: RuntimeConfig) -> RuntimeConfig:
             "interval": "4h",
             "use_testnet": True,
             "market_data_source": "exchange",
+            "allow_live": False,
+            "live_dry_run": True,
+            "enable_live_autotrade": False,
+            "live_confirmation": "",
         }
     )
 
