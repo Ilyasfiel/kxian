@@ -26,6 +26,7 @@ def test_defaults_to_paper_mode(monkeypatch):
     assert config.enable_testnet_autotrade is False
     assert config.enable_live_autotrade is False
     assert config.live_confirmation == ""
+    assert config.live_credentials_confirmed is False
     assert config.max_live_order_usdt == 50
     assert config.require_strategy_gate is True
     assert config.require_sample_validation_gate is True
@@ -110,6 +111,7 @@ def test_live_execution_loads_when_all_live_confirmations_are_present(monkeypatc
     monkeypatch.setenv("KXIAN_SYMBOL", "BTCUSDT")
     monkeypatch.setenv("KXIAN_INTERVAL", "4h")
     monkeypatch.setenv("KXIAN_LIVE_CONFIRMATION", "LIVE:binance:BTCUSDT:4h")
+    monkeypatch.setenv("KXIAN_LIVE_CREDENTIALS_CONFIRMED", "true")
     monkeypatch.setenv("KXIAN_MAX_LIVE_ORDER_USDT", "25")
     monkeypatch.setenv("KXIAN_BINANCE_API_KEY", "key")
     monkeypatch.setenv("KXIAN_BINANCE_API_SECRET", "secret")
@@ -121,7 +123,29 @@ def test_live_execution_loads_when_all_live_confirmations_are_present(monkeypatc
     assert config.enable_live_autotrade is True
     assert config.use_testnet is False
     assert config.live_confirmation == "LIVE:binance:BTCUSDT:4h"
+    assert config.live_credentials_confirmed is True
     assert config.max_live_order_usdt == 25
+
+
+def test_live_execution_requires_production_credential_confirmation(monkeypatch):
+    monkeypatch.setenv("KXIAN_MODE", "live")
+    monkeypatch.setenv("KXIAN_ALLOW_LIVE", "true")
+    monkeypatch.setenv("KXIAN_LIVE_DRY_RUN", "false")
+    monkeypatch.setenv("KXIAN_ENABLE_LIVE_AUTOTRADE", "true")
+    monkeypatch.setenv("KXIAN_USE_TESTNET", "false")
+    monkeypatch.setenv("KXIAN_EXCHANGE", "binance")
+    monkeypatch.setenv("KXIAN_SYMBOL", "BTCUSDT")
+    monkeypatch.setenv("KXIAN_INTERVAL", "4h")
+    monkeypatch.setenv("KXIAN_LIVE_CONFIRMATION", "LIVE:binance:BTCUSDT:4h")
+    monkeypatch.setenv("KXIAN_BINANCE_API_KEY", "key")
+    monkeypatch.setenv("KXIAN_BINANCE_API_SECRET", "secret")
+
+    try:
+        load_config()
+    except ConfigError as exc:
+        assert "KXIAN_LIVE_CREDENTIALS_CONFIRMED=true" in str(exc)
+    else:
+        raise AssertionError("Expected ConfigError for unconfirmed production credentials")
 
 
 def test_testnet_mode_requires_credentials_but_not_live_allow(monkeypatch):

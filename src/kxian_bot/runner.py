@@ -10,7 +10,7 @@ from kxian_bot.batch import run_batch_backtest
 from kxian_bot.backtest import BacktestEngine, SyntheticShortBacktestEngine
 from kxian_bot.brokers.base import create_broker
 from kxian_bot.brokers.paper import PaperBroker
-from kxian_bot.config import RuntimeConfig
+from kxian_bot.config import RuntimeConfig, expected_live_confirmation
 from kxian_bot.execution_rules import default_trading_rule, normalize_order
 from kxian_bot.market_data import (
     aggregate_candles,
@@ -2054,6 +2054,12 @@ class TradingRunner:
                 return False, "live_dry_run_enabled"
             if not self.config.enable_live_autotrade:
                 return False, "live_autotrade_disabled"
+            if not self.config.live_credentials_confirmed:
+                return False, "live_credentials_not_confirmed"
+            if self.config.use_testnet:
+                return False, "live_endpoint_points_to_testnet"
+            if self.config.live_confirmation != expected_live_confirmation(self.config):
+                return False, "live_confirmation_required"
             return True, ""
         return False, "exchange_autotrade_mode_required"
 
@@ -2065,6 +2071,7 @@ class TradingRunner:
             "allow_live": self.config.allow_live,
             "live_dry_run": self.config.live_dry_run,
             "enable_live_autotrade": self.config.enable_live_autotrade,
+            "live_credentials_confirmed": self.config.live_credentials_confirmed,
             "use_testnet": self.config.use_testnet,
             "order_notional": round(order.quantity * order.price, 8),
             "max_live_order_usdt": self.config.max_live_order_usdt,

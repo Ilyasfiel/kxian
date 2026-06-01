@@ -33,6 +33,8 @@ def testnet_closed_loop_scope_failures(config: RuntimeConfig, *, require_autotra
         failures.append("live_dry_run_must_remain_enabled")
     if config.live_confirmation:
         failures.append("live_confirmation_must_remain_empty")
+    if config.live_credentials_confirmed:
+        failures.append("live_credentials_confirmation_must_remain_false")
     return failures
 
 
@@ -48,6 +50,7 @@ def testnet_closed_loop_next_steps(failures: list[str]) -> list[str]:
         "live_autotrade_must_remain_disabled": "set KXIAN_ENABLE_LIVE_AUTOTRADE=false",
         "live_dry_run_must_remain_enabled": "set KXIAN_LIVE_DRY_RUN=true",
         "live_confirmation_must_remain_empty": "clear KXIAN_LIVE_CONFIRMATION",
+        "live_credentials_confirmation_must_remain_false": "set KXIAN_LIVE_CREDENTIALS_CONFIRMED=false",
     }
     return [mapping[failure] for failure in failures if failure in mapping]
 

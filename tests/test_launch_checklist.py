@@ -176,6 +176,7 @@ def test_launch_checklist_blocks_live_until_both_testnet_observations_and_live_p
         live_dry_run=False,
         enable_live_autotrade=True,
         live_confirmation="LIVE:binance:BTCUSDT:4h",
+        live_credentials_confirmed=True,
         binance_api_key="key",
         binance_api_secret="secret",
     )
@@ -218,6 +219,7 @@ def test_launch_checklist_passes_live_after_profile_and_observations_exist(tmp_p
         live_dry_run=False,
         enable_live_autotrade=True,
         live_confirmation="LIVE:binance:BTCUSDT:4h",
+        live_credentials_confirmed=True,
         binance_api_key="key",
         binance_api_secret="secret",
     )
@@ -427,6 +429,7 @@ def test_launch_checklist_blocks_live_when_bounded_observation_lacks_lifecycle(t
         live_dry_run=False,
         enable_live_autotrade=True,
         live_confirmation="LIVE:binance:BTCUSDT:4h",
+        live_credentials_confirmed=True,
         binance_api_key="key",
         binance_api_secret="secret",
     )

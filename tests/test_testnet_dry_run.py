@@ -194,6 +194,7 @@ def test_testnet_dry_run_rejects_live_switches_for_closed_loop(tmp_path):
         live_dry_run=False,
         enable_live_autotrade=True,
         live_confirmation="LIVE:binance:BTCUSDT:4h",
+        live_credentials_confirmed=True,
     )
 
     result = testnet_dry_run.run_testnet_dry_run(
@@ -210,6 +211,7 @@ def test_testnet_dry_run_rejects_live_switches_for_closed_loop(tmp_path):
         "live_autotrade_must_remain_disabled",
         "live_dry_run_must_remain_enabled",
         "live_confirmation_must_remain_empty",
+        "live_credentials_confirmation_must_remain_false",
     ]
 
 

@@ -373,6 +373,8 @@ class LiveBrokerPlaceholder:
                 return "live_endpoint_points_to_testnet"
             if self.config.live_confirmation != expected_live_confirmation(self.config):
                 return "live_confirmation_required"
+            if not self.config.live_credentials_confirmed:
+                return "live_credentials_not_confirmed"
             return ""
         return "testnet_or_live_mode_required"
 

@@ -117,6 +117,8 @@ def _automation_check(config: RuntimeConfig, *, require_testnet_autotrade: bool 
             failures.append("live_autotrade_disabled")
         if config.live_confirmation != expected_live_confirmation(config):
             failures.append("live_confirmation_required")
+        if not config.live_credentials_confirmed:
+            failures.append("live_credentials_not_confirmed")
     return {
         "name": "automation",
         "status": "pass" if not failures else "fail",
@@ -128,6 +130,7 @@ def _automation_check(config: RuntimeConfig, *, require_testnet_autotrade: bool 
             "allow_live": config.allow_live,
             "live_dry_run": config.live_dry_run,
             "live_confirmation_required": expected_live_confirmation(config) if config.mode == "live" else "",
+            "live_credentials_confirmed": config.live_credentials_confirmed,
             "max_live_order_usdt": config.max_live_order_usdt,
         },
     }
@@ -214,6 +217,8 @@ def _next_steps(config: RuntimeConfig, checks: list[dict[str, Any]], preflight: 
         steps.append("set KXIAN_ENABLE_LIVE_AUTOTRADE=true only for controlled small live execution")
     if "live_confirmation_required" in failed:
         steps.append(f"set KXIAN_LIVE_CONFIRMATION={expected_live_confirmation(config)} to explicitly confirm the live scope")
+    if "live_credentials_not_confirmed" in failed:
+        steps.append("set KXIAN_LIVE_CREDENTIALS_CONFIRMED=true only after production API keys are verified, withdrawal is disabled, and the key is not a testnet key")
     if {"strategy_gate", "stress_gate", "walk_forward_gate"} & failed_preflight:
         steps.append("run backtest, stress-backtest, and walk-forward for the exact current strategy parameters")
     if "sample_validation_gate" in failed_preflight:

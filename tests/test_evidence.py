@@ -158,6 +158,7 @@ def test_build_testnet_evidence_forces_live_flags_closed(tmp_path):
     assert evidence["scope"]["live_dry_run"] is True
     assert evidence["scope"]["enable_live_autotrade"] is False
     assert evidence["scope"]["live_confirmation_present"] is False
+    assert evidence["scope"]["live_credentials_confirmed"] is False
     assert evidence_contract_failures(evidence) == []
 
 

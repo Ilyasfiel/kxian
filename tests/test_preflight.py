@@ -560,6 +560,7 @@ def test_preflight_requires_live_confirmation_switches(tmp_path):
         "live_autotrade_disabled",
         "live_endpoint_points_to_testnet",
         "live_confirmation_required",
+        "live_credentials_not_confirmed",
     ]
 
 
@@ -584,6 +585,7 @@ def test_preflight_passes_for_confirmed_live_mode(tmp_path):
         live_dry_run=False,
         enable_live_autotrade=True,
         live_confirmation="LIVE:binance:BTCUSDT:1m",
+        live_credentials_confirmed=True,
         binance_api_key="key",
         binance_api_secret="secret",
     )

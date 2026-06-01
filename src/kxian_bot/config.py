@@ -73,6 +73,7 @@ class RuntimeConfig(BaseModel):
     enable_testnet_autotrade: bool = False
     enable_live_autotrade: bool = False
     live_confirmation: str = ""
+    live_credentials_confirmed: bool = False
     max_live_order_usdt: float = Field(default=50.0, gt=0)
     require_strategy_gate: bool = True
     require_sample_validation_gate: bool = True
@@ -152,6 +153,7 @@ def load_config(validate_execution: bool = True) -> RuntimeConfig:
             enable_testnet_autotrade=_get_bool("KXIAN_ENABLE_TESTNET_AUTOTRADE", False),
             enable_live_autotrade=_get_bool("KXIAN_ENABLE_LIVE_AUTOTRADE", False),
             live_confirmation=os.getenv("KXIAN_LIVE_CONFIRMATION", ""),
+            live_credentials_confirmed=_get_bool("KXIAN_LIVE_CREDENTIALS_CONFIRMED", False),
             max_live_order_usdt=float(os.getenv("KXIAN_MAX_LIVE_ORDER_USDT", "50")),
             require_strategy_gate=_get_bool("KXIAN_REQUIRE_STRATEGY_GATE", True),
             require_sample_validation_gate=_get_bool("KXIAN_REQUIRE_SAMPLE_VALIDATION_GATE", True),
@@ -197,6 +199,10 @@ def load_config(validate_execution: bool = True) -> RuntimeConfig:
         if config.live_confirmation != expected_live_confirmation(config):
             raise ConfigError(
                 f"Live order execution requires KXIAN_LIVE_CONFIRMATION={expected_live_confirmation(config)}"
+            )
+        if not config.live_credentials_confirmed:
+            raise ConfigError(
+                "Live order execution requires KXIAN_LIVE_CREDENTIALS_CONFIRMED=true after production API keys are verified"
             )
     if config.mode == "testnet" and config.exchange == "binance" and not config.use_testnet:
         raise ConfigError("Binance testnet mode requires KXIAN_USE_TESTNET=true")

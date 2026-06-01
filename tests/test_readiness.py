@@ -205,6 +205,7 @@ def test_readiness_blocks_live_mode_until_all_live_switches_are_confirmed(tmp_pa
         "live_dry_run_enabled",
         "live_autotrade_disabled",
         "live_confirmation_required",
+        "live_credentials_not_confirmed",
     ]
     assert checks["live_support"]["status"] == "pass"
     assert any("KXIAN_LIVE_DRY_RUN=false" in step for step in result["next_steps"])
@@ -231,6 +232,7 @@ def test_readiness_passes_for_confirmed_live_profile(tmp_path):
         live_dry_run=False,
         enable_live_autotrade=True,
         live_confirmation="LIVE:binance:BTCUSDT:1m",
+        live_credentials_confirmed=True,
         binance_api_key="key",
         binance_api_secret="secret",
     )

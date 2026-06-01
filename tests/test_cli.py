@@ -687,6 +687,80 @@ def test_testnet_setup_check_cli_uses_relaxed_config_and_redacts_credentials(mon
     assert "super-secret-value" not in json.dumps(output)
 
 
+def test_live_setup_check_cli_uses_relaxed_config_and_exits_when_blocked(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(
+        mode="testnet",
+        db_path=str(tmp_path / "test.sqlite3"),
+        binance_api_key="api-key",
+        binance_api_secret="super-secret-value",
+    )
+    received = {}
+
+    def fake_load_config(validate_execution=True):
+        received["validate_execution"] = validate_execution
+        return config
+
+    def fake_live_setup_check(received_config, timeout_seconds=5.0):
+        return {
+            "status": "blocked",
+            "reason": "live_setup_blocked",
+            "mode": "live",
+            "timeout_seconds": timeout_seconds,
+            "will_submit_orders": False,
+            "credentials": {
+                "present": {
+                    "binance_api_key": bool(received_config.binance_api_key),
+                    "binance_api_secret": bool(received_config.binance_api_secret),
+                },
+                "failures": [],
+                "production_credentials_confirmed": False,
+            },
+            "next_steps": ["set KXIAN_LIVE_CREDENTIALS_CONFIRMED=true only after production key review"],
+        }
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(cli, "run_live_setup_check", fake_live_setup_check)
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "live-setup-check", "--timeout-seconds", "1.5"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected live-setup-check to exit while blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    assert received["validate_execution"] is False
+    assert output["timeout_seconds"] == 1.5
+    assert output["will_submit_orders"] is False
+    assert output["credentials"]["present"]["binance_api_key"] is True
+    assert "api-key" not in json.dumps(output)
+    assert "super-secret-value" not in json.dumps(output)
+
+
+def test_live_setup_check_cli_returns_zero_when_passed(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(mode="live", db_path=str(tmp_path / "test.sqlite3"))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(
+        cli,
+        "run_live_setup_check",
+        lambda received_config, timeout_seconds=5.0: {
+            "status": "pass",
+            "reason": "live_setup_ready",
+            "mode": "live",
+            "will_submit_orders": False,
+            "timeout_seconds": timeout_seconds,
+        },
+    )
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "live-setup-check"])
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "pass"
+    assert output["will_submit_orders"] is False
+
+
 def test_run_once_cli_uses_relaxed_config_for_structured_launch_gate(monkeypatch, capsys, tmp_path):
     config = RuntimeConfig(mode="testnet", db_path=str(tmp_path / "test.sqlite3"), interval="4h")
     received = {}

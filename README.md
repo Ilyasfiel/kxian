@@ -9,7 +9,7 @@ Kxian Bot is a small Python trading bot skeleton for watching crypto K-lines, ge
 - Public market data can use Binance or OKX K-line endpoints
 - Strategy automation submits exchange orders only in `paper` mode by default
 - Bounded testnet order automation requires `KXIAN_ENABLE_TESTNET_AUTOTRADE=true`; non-ordering testnet checks can run first with it disabled
-- Live strategy automation requires `KXIAN_ALLOW_LIVE=true`, `KXIAN_LIVE_DRY_RUN=false`, `KXIAN_ENABLE_LIVE_AUTOTRADE=true`, `KXIAN_USE_TESTNET=false`, and `KXIAN_LIVE_CONFIRMATION=LIVE:<exchange>:<symbol>:<interval>`
+- Live strategy automation requires `KXIAN_ALLOW_LIVE=true`, `KXIAN_LIVE_DRY_RUN=false`, `KXIAN_ENABLE_LIVE_AUTOTRADE=true`, `KXIAN_USE_TESTNET=false`, `KXIAN_LIVE_CONFIRMATION=LIVE:<exchange>:<symbol>:<interval>`, and `KXIAN_LIVE_CREDENTIALS_CONFIRMED=true`
 - Live orders are capped by `KXIAN_MAX_LIVE_ORDER_USDT` before they can leave the bot
 
 ## Setup
@@ -363,19 +363,19 @@ The runner also restores the latest persisted `risk_state` for the current mode,
 Only one strategy loop can run for the same mode, exchange, symbol, and interval at a time. The loop writes a SQLite heartbeat lock and releases it on normal exit; `KXIAN_LOOP_LOCK_STALE_SECONDS` controls when a stale lock can be taken over after a crash.
 Optional protective exits can close an existing long position before the next strategy sell signal. Set `KXIAN_STOP_LOSS_PCT`, `KXIAN_TAKE_PROFIT_PCT`, and/or `KXIAN_TRAILING_STOP_PCT` to a positive percentage; the runner restores the average entry price from filled orders, persists the trailing peak price per mode/exchange/symbol/interval, and emits `stop_loss_triggered`, `take_profit_triggered`, or `trailing_stop_triggered` sell signals when the latest candle crosses the threshold. The same exits are included in `backtest`, `stress-backtest`, `walk-forward`, and `batch-backtest` so validation matches live behavior.
 
-## Later-stage live dry-run signing reference
+## 实盘灰度准入
 
-Do not run this section during the current testnet close-loop. It is retained only as a later-stage reference after a separate live review.
+实盘只能在单独人工复核后进入小额灰度，详见 `docs/实盘灰度操作手册.md`。`live-setup-check` 是只读准入检查：它强制 live 视图为 `mode=live`、`use_testnet=false`、`market_data_source=exchange`，聚合 readiness、`launch-checklist --target live`、生产端点健康、生产 key 人工确认和首轮 canary 金额上限，并固定返回 `will_submit_orders=false`。
 
-Live dry-run mode builds a signed order request for inspection, then rejects execution. Binance uses the spot testnet URL when `KXIAN_USE_TESTNET=true`; OKX demo requests include `x-simulated-trading: 1`. Treat any live dry-run environment changes as a separate reviewed stage, not part of the `Binance testnet / BTCUSDT / 4h` close-loop acceptance.
+```powershell
+kxian-bot live-setup-check --timeout-seconds 5
+```
 
-## Later-stage live strategy automation reference
+只有当 `live-setup-check` 返回 `status=pass`、`phase=ready_for_bounded_live_canary`，且 `launch-checklist --target live` 返回 `phase=ready_for_bounded_live_loop` 后，操作者才可以人工批准一次 `trade-loop --max-iterations 1 --sleep-seconds 0` 小额 canary。该检查不会执行 `promote-profile-to-live`，不会发起订单，也不会回显 API key/secret。
 
-Do not run this section during the current testnet close-loop. This stage explicitly stops at `launch-checklist --target testnet`.
+实盘自动化仍然执行同一套 preflight 门禁，会刷新未完成订单、同步账户和成交、拒绝未知成本价持仓，并把订单、成交、循环事件和风险状态记录到 SQLite。`promote-profile-to-live` 和 `launch-checklist --target live` 都要求同一交易所、交易对、周期已经通过非下单测试网观察和 bounded 测试网下单观察。
 
-Only move to live after a separate live review, after the exact same profile has passed paper validation, testnet dry-run, non-ordering testnet observation, and bounded testnet order observation. That later review would cover live-profile promotion, live readiness, live launch checklist, explicit live confirmation, and one very small bounded live loop. The current close-loop does not execute those commands and does not enable live switches.
-
-Live automation still runs the same preflight gates, refreshes open exchange orders, syncs balances/fills, refuses unknown entry-price positions, and records exchange orders, fills, loop events, and risk state in SQLite. `promote-profile-to-live` and `launch-checklist --target live` both require passing non-ordering testnet observation and bounded testnet order observation for the same exchange, symbol, and interval before a live profile is considered ready. This is explicitly outside the current testnet close-loop deliverable.
+单轮 canary 后必须复核账户、成交、挂单和 checklist；任何异常都按 `docs/实盘灰度操作手册.md` 回退，不允许继续扩大运行。
 
 ## Testnet manual orders
 

@@ -14,6 +14,7 @@ from kxian_bot.dashboard import run_dashboard
 from kxian_bot.evidence import build_testnet_evidence, write_evidence
 from kxian_bot.exchange_health import run_exchange_health_check
 from kxian_bot.launch_checklist import run_launch_checklist
+from kxian_bot.live_setup import run_live_setup_check
 from kxian_bot.market_data import MarketDataError
 from kxian_bot.models import OrderRequest, TradingRule
 from kxian_bot.preflight import run_preflight
@@ -41,6 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
     launch_parser.add_argument("--evidence-out", type=str, default=None)
     setup_parser = subparsers.add_parser("testnet-setup-check")
     setup_parser.add_argument("--timeout-seconds", type=float, default=5.0)
+    live_setup_parser = subparsers.add_parser("live-setup-check")
+    live_setup_parser.add_argument("--timeout-seconds", type=float, default=5.0)
     pause_parser = subparsers.add_parser("pause")
     pause_parser.add_argument("--reason", type=str, default="manual_pause")
     pause_parser.add_argument("--updated-by", type=str, default="cli")
@@ -460,6 +463,7 @@ def main() -> None:
         "readiness",
         "exchange-health",
         "launch-checklist",
+        "live-setup-check",
         "paper-dry-run",
         "promote-profile-to-live",
         "promote-profile-to-testnet",
@@ -529,6 +533,13 @@ def main() -> None:
 
         if args.command == "testnet-setup-check":
             result = run_testnet_setup_check(config, timeout_seconds=args.timeout_seconds)
+            print(json.dumps(result, ensure_ascii=False))
+            if result["status"] != "pass":
+                raise SystemExit(2)
+            return
+
+        if args.command == "live-setup-check":
+            result = run_live_setup_check(config, timeout_seconds=args.timeout_seconds)
             print(json.dumps(result, ensure_ascii=False))
             if result["status"] != "pass":
                 raise SystemExit(2)

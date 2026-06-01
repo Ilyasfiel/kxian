@@ -1651,6 +1651,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         live_autotrade_disabled: "Live auto-trading is disabled",
         live_endpoint_points_to_testnet: "Live endpoint still points to testnet",
         live_confirmation_required: "Live confirmation is required",
+        live_credentials_not_confirmed: "Production API key has not been manually confirmed",
         live_order_notional_exceeds_limit: "Live order notional exceeds limit",
         testnet_launch_ready: "Testnet ready",
         testnet_launch_blocked: "Testnet launch blocked",

@@ -360,6 +360,7 @@ def _testnet_config(config: RuntimeConfig) -> RuntimeConfig:
             "live_dry_run": True,
             "enable_live_autotrade": False,
             "live_confirmation": "",
+            "live_credentials_confirmed": False,
         }
     )
 
@@ -377,6 +378,7 @@ def _config_scope(config: RuntimeConfig) -> dict[str, Any]:
         "live_dry_run": config.live_dry_run,
         "enable_live_autotrade": config.enable_live_autotrade,
         "live_confirmation_present": bool(config.live_confirmation),
+        "live_credentials_confirmed": config.live_credentials_confirmed,
     }
 
 

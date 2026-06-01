@@ -203,6 +203,30 @@ def test_live_submit_order_blocks_when_dry_run_enabled():
     assert session.calls == []
 
 
+def test_live_submit_order_blocks_when_production_credentials_are_not_confirmed():
+    session = FakeSession(FakeResponse({"orderId": 123, "status": "NEW"}))
+    broker = LiveBrokerPlaceholder(
+        RuntimeConfig(
+            mode="live",
+            exchange="binance",
+            allow_live=True,
+            use_testnet=False,
+            live_dry_run=False,
+            enable_live_autotrade=True,
+            live_confirmation="LIVE:binance:BTCUSDT:1m",
+            binance_api_key="api-key",
+            binance_api_secret="secret",
+        ),
+        session=session,
+    )
+
+    result = broker.submit_order(OrderRequest(symbol="BTCUSDT", side="buy", quantity=0.01, price=100))
+
+    assert result.status == "rejected"
+    assert result.reason == "live_credentials_not_confirmed"
+    assert session.calls == []
+
+
 def test_live_submit_order_uses_production_endpoint_only_after_confirmation():
     session = FakeSession(
         FakeResponse(
@@ -225,6 +249,7 @@ def test_live_submit_order_uses_production_endpoint_only_after_confirmation():
             live_dry_run=False,
             enable_live_autotrade=True,
             live_confirmation="LIVE:binance:BTCUSDT:1m",
+            live_credentials_confirmed=True,
             binance_api_key="api-key",
             binance_api_secret="secret",
         ),

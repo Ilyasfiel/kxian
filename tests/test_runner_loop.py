@@ -1221,6 +1221,24 @@ def test_runner_live_autotrade_blocks_orders_above_live_notional_limit(tmp_path)
     assert orders[0]["reason"] == "live_order_notional_exceeds_limit"
 
 
+def test_runner_live_autotrade_blocks_before_account_sync_when_credentials_are_not_confirmed(tmp_path):
+    runner, broker, storage = _live_replay_runner(
+        tmp_path,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_credentials_confirmed=False,
+    )
+
+    result = runner.run_once()
+
+    orders = storage.fetch_all("exchange_orders")
+    assert result["status"] == "rejected"
+    assert result["reason"] == "live_credentials_not_confirmed"
+    assert broker.account_checked == []
+    assert broker.submitted == []
+    assert orders[0]["reason"] == "live_credentials_not_confirmed"
+
+
 def test_runner_live_autotrade_submits_when_confirmed_and_within_limit(tmp_path):
     runner, broker, storage = _live_replay_runner(
         tmp_path,
@@ -1290,6 +1308,7 @@ def _live_replay_runner(
     enable_live_autotrade: bool,
     broker=None,
     max_live_order_usdt: float = 50,
+    live_credentials_confirmed: bool = True,
 ):
     db_path = tmp_path / "kxian.sqlite3"
     storage = SQLiteStorage(db_path)
@@ -1318,6 +1337,7 @@ def _live_replay_runner(
             live_dry_run=live_dry_run,
             enable_live_autotrade=enable_live_autotrade,
             live_confirmation="LIVE:binance:BTCUSDT:1m",
+            live_credentials_confirmed=live_credentials_confirmed,
             max_live_order_usdt=max_live_order_usdt,
             binance_api_key="key",
             binance_api_secret="secret",

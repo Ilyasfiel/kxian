@@ -15,6 +15,7 @@ jobs:
       KXIAN_LIVE_DRY_RUN: "true"
       KXIAN_ENABLE_TESTNET_AUTOTRADE: "false"
       KXIAN_LIVE_CONFIRMATION: ""
+      KXIAN_LIVE_CREDENTIALS_CONFIRMED: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
