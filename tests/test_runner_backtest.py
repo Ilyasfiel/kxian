@@ -844,6 +844,13 @@ def test_runner_select_samples_reports_when_a_sample_blocks_candidates(tmp_path)
     assert result["reason"] == "no_candidate_passed_validation"
     assert result["candidates"][0]["failed_samples"] == 1
     assert result["candidates"][0]["samples"][1]["reason"] == "insufficient_validation_candles"
+    assert result["failure_matrix"]["sample_failures"][0]["input_file"] == second_path.name
+    assert result["failure_matrix"]["sample_failures"][0]["top_reasons"] == [
+        {"reason": "insufficient_validation_candles", "count": 1}
+    ]
+    assert result["failure_matrix"]["strategy_failures"][0]["strategy"] == "moving_average_cross"
+    assert result["failure_matrix"]["gate_failures"] == [{"reason": "insufficient_validation_candles", "count": 1}]
+    assert result["failure_matrix"]["worst_samples"][0]["input_file"] == second_path.name
 
 
 def test_runner_select_samples_can_promote_multi_sample_profile(tmp_path):
@@ -1397,8 +1404,40 @@ def test_runner_screen_samples_stops_candidate_after_first_failed_sample(tmp_pat
     assert result["best_failed_candidate"]["strategy"] == "moving_average_cross"
     assert result["best_failed_candidate"]["failed_sample_examples"][0]["input_file"] == str(second_path)
     assert result["diagnostics"][0]["code"] == "strategy_gate_insufficient_trades"
+    assert result["failure_matrix"]["sample_failures"][0]["input_file"] == second_path.name
+    assert result["failure_matrix"]["strategy_failures"][0]["strategy"] == "moving_average_cross"
+    assert result["failure_matrix"]["gate_failures"] == [{"reason": "strategy_gate_insufficient_trades", "count": 1}]
+    assert result["failure_matrix"]["worst_samples"][0]["input_file"] == second_path.name
     assert any("do not promote" in action for action in result["recommended_actions"])
     assert any("screen-samples only as a research prefilter" in action for action in result["recommended_actions"])
+
+
+def test_runner_screen_samples_early_failure_includes_empty_failure_matrix(tmp_path):
+    runner = TradingRunner(
+        RuntimeConfig(
+            db_path=str(tmp_path / "kxian.sqlite3"),
+            market_data_source="sqlite",
+        )
+    )
+
+    result = runner.screen_samples(
+        limit=100,
+        segments=3,
+        input_files=[],
+        short_windows=[3],
+        long_windows=[5],
+        top=3,
+        resample_intervals=["raw"],
+    )
+
+    assert result["status"] == "fail"
+    assert result["reason"] == "no_input_files"
+    assert result["failure_matrix"] == {
+        "sample_failures": [],
+        "strategy_failures": [],
+        "gate_failures": [],
+        "worst_samples": [],
+    }
 
 
 def test_runner_screen_samples_can_relax_trade_count_prefilter_only(tmp_path, monkeypatch):

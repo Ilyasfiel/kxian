@@ -1376,6 +1376,7 @@ def _screen_samples_output(result: dict, summary_only: bool = False) -> dict:
         "decision",
         "top_failure_reasons",
         "failed_gate_counts",
+        "failure_matrix",
         "best_failed_candidate",
         "diagnostics",
         "recommended_actions",

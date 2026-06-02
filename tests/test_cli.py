@@ -362,6 +362,12 @@ class FakeRunner:
             "top": top,
             "promote": promote,
             "sample_count": len(input_files),
+            "failure_matrix": {
+                "sample_failures": [],
+                "strategy_failures": [],
+                "gate_failures": [],
+                "worst_samples": [],
+            },
             "selected": {"parameters": {"short_window": short_windows[0], "long_window": long_windows[0]}},
             "promoted": {"parameters": {"short_window": short_windows[0], "long_window": long_windows[0]}} if promote else None,
         }
@@ -443,6 +449,12 @@ class FakeRunner:
             "decision": "prefilter_passed",
             "top_failure_reasons": [],
             "failed_gate_counts": [],
+            "failure_matrix": {
+                "sample_failures": [],
+                "strategy_failures": [],
+                "gate_failures": [],
+                "worst_samples": [],
+            },
             "best_failed_candidate": None,
             "diagnostics": [{"code": "prefilter_candidate_found"}],
             "recommended_actions": [
@@ -2261,6 +2273,12 @@ def test_select_samples_cli(monkeypatch, capsys, tmp_path):
     assert output["segments"] == 4
     assert output["input_files"] == ["sample_data/january.csv", "sample_data/february.csv"]
     assert output["sample_count"] == 2
+    assert output["failure_matrix"] == {
+        "sample_failures": [],
+        "strategy_failures": [],
+        "gate_failures": [],
+        "worst_samples": [],
+    }
     assert output["resample_interval"] == "15m"
     assert output["short_windows"] == [3, 5]
     assert output["long_windows"] == [10, 20]
@@ -2522,6 +2540,12 @@ def test_screen_samples_cli_summary_only(monkeypatch, capsys, tmp_path):
     assert "short_windows" not in output
     assert output["selected"]["runtime_interval"] is None
     assert output["decision"] == "prefilter_passed"
+    assert output["failure_matrix"] == {
+        "sample_failures": [],
+        "strategy_failures": [],
+        "gate_failures": [],
+        "worst_samples": [],
+    }
     assert output["diagnostics"] == [{"code": "prefilter_candidate_found"}]
     assert output["recommended_actions"] == [
         "rerun the selected candidate with select-samples for stress and walk-forward validation before promotion"
@@ -2556,6 +2580,12 @@ def test_screen_samples_cli_exits_when_no_prefilter_candidate_passes(monkeypatch
                 "decision": "blocked",
                 "top_failure_reasons": [{"reason": "strategy_gate_return_too_low", "count": 2}],
                 "failed_gate_counts": [{"reason": "strategy_gate_return_too_low", "count": 2}],
+                "failure_matrix": {
+                    "sample_failures": [{"input_file": "january.csv", "count": 2}],
+                    "strategy_failures": [{"strategy": "moving_average_cross", "count": 2}],
+                    "gate_failures": [{"reason": "strategy_gate_return_too_low", "count": 2}],
+                    "worst_samples": [{"input_file": "january.csv"}],
+                },
                 "best_failed_candidate": {
                     "strategy": "moving_average_cross",
                     "parameters": {"short_window": 3, "long_window": 10},
@@ -2595,6 +2625,8 @@ def test_screen_samples_cli_exits_when_no_prefilter_candidate_passes(monkeypatch
     assert output["reason"] == "no_candidate_passed_prefilter"
     assert output["decision"] == "blocked"
     assert output["top_failure_reasons"] == [{"reason": "strategy_gate_return_too_low", "count": 2}]
+    assert output["failure_matrix"]["sample_failures"] == [{"input_file": "january.csv", "count": 2}]
+    assert output["failure_matrix"]["gate_failures"] == [{"reason": "strategy_gate_return_too_low", "count": 2}]
     assert output["best_failed_candidate"]["strategy"] == "moving_average_cross"
     assert output["diagnostics"][0]["code"] == "strategy_gate_return_too_low"
     assert output["recommended_actions"] == ["do not promote this result"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 import time
@@ -832,6 +833,7 @@ class TradingRunner:
                 "selected": None,
                 "promoted": None,
                 "candidates": [],
+                "failure_matrix": _sample_failure_matrix([]),
             }
 
         sample_inputs = [
@@ -1013,6 +1015,7 @@ class TradingRunner:
             "validated_candidates": validated_count,
             "selected": selected,
             "promoted": promoted,
+            "failure_matrix": _sample_failure_matrix(ranked),
             "candidates": ranked[:top],
         }
 
@@ -1083,6 +1086,7 @@ class TradingRunner:
                 "selected": None,
                 "intervals": [],
                 "candidates": [],
+                "failure_matrix": _sample_failure_matrix([]),
                 **_screen_decision_fields("fail", "no_resample_intervals", [], [], len(input_files), 0),
             }
         if not input_files:
@@ -1096,6 +1100,7 @@ class TradingRunner:
                 "selected": None,
                 "intervals": [],
                 "candidates": [],
+                "failure_matrix": _sample_failure_matrix([]),
                 **_screen_decision_fields("fail", "no_input_files", [], [], len(input_files), 0),
             }
 
@@ -1120,6 +1125,7 @@ class TradingRunner:
                 "intervals": [],
                 "candidates": [],
                 "error": str(exc),
+                "failure_matrix": _sample_failure_matrix([]),
                 **_screen_decision_fields("fail", "input_file_load_failed", [], [], len(input_files), 0),
             }
         candidates: list[dict] = []
@@ -1308,6 +1314,7 @@ class TradingRunner:
             "selected": selected,
             "intervals": sorted(interval_summaries, key=_screen_interval_rank_key, reverse=True),
             "candidates": ranked[:top],
+            "failure_matrix": _sample_failure_matrix(ranked),
             **decision_fields,
             "next_steps": [
                 "rerun the selected candidate with select-samples for stress and walk-forward validation before promotion"
@@ -3077,6 +3084,81 @@ def _screen_failed_gate_reasons(candidates: list[dict]) -> list[str]:
         for sample in candidate.get("samples") or []:
             reasons.extend(_failed_gate_reasons(sample.get("gates") or {}))
     return reasons
+
+
+def _sample_failure_matrix(candidates: list[dict]) -> dict:
+    sample_counter: Counter[str] = Counter()
+    strategy_counter: Counter[str] = Counter()
+    gate_counter: Counter[str] = Counter()
+    sample_reason_counter: dict[str, Counter[str]] = defaultdict(Counter)
+    strategy_reason_counter: dict[str, Counter[str]] = defaultdict(Counter)
+    worst_samples: dict[str, dict] = {}
+    for candidate in candidates:
+        strategy_name = str(candidate.get("strategy") or "unknown_strategy")
+        for sample in candidate.get("samples") or []:
+            if sample.get("status") in {"pass", "prefilter_pass"}:
+                continue
+            sample_name = _sample_display_name(sample.get("input_file"))
+            reasons = _sample_failure_reason_list(sample)
+            if not reasons:
+                reasons = ["unknown_sample_failure"]
+            for reason in reasons:
+                sample_counter[sample_name] += 1
+                strategy_counter[strategy_name] += 1
+                gate_counter[reason] += 1
+                sample_reason_counter[sample_name][reason] += 1
+                strategy_reason_counter[strategy_name][reason] += 1
+            _update_worst_sample(worst_samples, sample_name, sample)
+
+    return {
+        "sample_failures": _top_failure_rows(sample_counter, sample_reason_counter, label_key="input_file"),
+        "strategy_failures": _top_failure_rows(strategy_counter, strategy_reason_counter, label_key="strategy"),
+        "gate_failures": [{"reason": reason, "count": count} for reason, count in gate_counter.most_common(10)],
+        "worst_samples": [worst_samples[key] for key in sorted(worst_samples, key=lambda item: _failed_sample_rank_key(worst_samples[item]))[:5]],
+    }
+
+
+def _sample_failure_reason_list(sample: dict) -> list[str]:
+    gate_reasons = _failed_gate_reasons(sample.get("gates") or {})
+    if gate_reasons:
+        return gate_reasons
+    reason = sample.get("reason")
+    if reason and reason not in {"all_gates_passed", "strategy_gate_passed"}:
+        return [str(reason)]
+    return []
+
+
+def _sample_display_name(value: object) -> str:
+    if value is None:
+        return "unknown_sample"
+    text = str(value)
+    return Path(text).name or text
+
+
+def _top_failure_rows(counter: Counter[str], reason_counter: dict[str, Counter[str]], label_key: str) -> list[dict]:
+    rows: list[dict] = []
+    for label, count in counter.most_common(10):
+        rows.append(
+            {
+                label_key: label,
+                "count": count,
+                "top_reasons": [
+                    {"reason": reason, "count": reason_count}
+                    for reason, reason_count in reason_counter[label].most_common(5)
+                ],
+            }
+        )
+    return rows
+
+
+def _update_worst_sample(worst_samples: dict[str, dict], sample_name: str, sample: dict) -> None:
+    compact = _compact_failed_sample(sample)
+    if not compact:
+        return
+    compact["input_file"] = sample_name
+    existing = worst_samples.get(sample_name)
+    if existing is None or _failed_sample_rank_key(compact) < _failed_sample_rank_key(existing):
+        worst_samples[sample_name] = compact
 
 
 def _screen_best_failed_candidate(candidates: list[dict]) -> dict | None:
