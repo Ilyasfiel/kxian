@@ -506,9 +506,20 @@ class OkxMarketDataClient:
 class BitgetMarketDataClient:
     BASE_URL = "https://api.bitget.com"
     MAX_HISTORICAL_LIMIT = 200
+    SYNTHETIC_INTERVALS = {"2h": "1h"}
 
     def fetch_klines(self, symbol: str, interval: str, limit: int = 200) -> list[Candle]:
-        return self._request_klines(symbol, interval, limit=limit)
+        source_interval = self.SYNTHETIC_INTERVALS.get(interval, interval)
+        source_limit = limit
+        if source_interval != interval:
+            target_ms = interval_to_milliseconds(interval)
+            source_ms = interval_to_milliseconds(source_interval)
+            source_limit = max(limit, limit * (target_ms // source_ms))
+
+        candles = self._request_klines(symbol, source_interval, limit=source_limit)
+        if source_interval == interval:
+            return candles
+        return aggregate_candles(candles, interval)[-limit:]
 
     def fetch_historical_klines(
         self,
@@ -520,13 +531,14 @@ class BitgetMarketDataClient:
         sleep_seconds: float = 0.0,
     ) -> list[Candle]:
         _validate_time_range(start_time, end_time)
-        interval_ms = interval_to_milliseconds(interval)
+        source_interval = self.SYNTHETIC_INTERVALS.get(interval, interval)
+        source_interval_ms = interval_to_milliseconds(source_interval)
         limit = _clamp_limit(limit_per_request, self.MAX_HISTORICAL_LIMIT)
-        end_cursor = end_time + interval_ms
+        end_cursor = end_time + source_interval_ms
         candles_by_open_time: dict[int, Candle] = {}
 
         while end_cursor > start_time:
-            page = self._request_history_klines(symbol, interval, limit=limit, end_time=end_cursor)
+            page = self._request_history_klines(symbol, source_interval, limit=limit, end_time=end_cursor)
             page = _clean_candles(page, start_time, end_time)
             if not page:
                 break
@@ -544,7 +556,10 @@ class BitgetMarketDataClient:
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
 
-        return [candles_by_open_time[key] for key in sorted(candles_by_open_time)]
+        candles = [candles_by_open_time[key] for key in sorted(candles_by_open_time)]
+        if source_interval == interval:
+            return candles
+        return _clean_candles(aggregate_candles(candles, interval), start_time, end_time)
 
     def _request_klines(self, symbol: str, interval: str, limit: int) -> list[Candle]:
         try:

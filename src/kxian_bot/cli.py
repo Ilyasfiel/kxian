@@ -10,7 +10,7 @@ from pathlib import Path
 
 from kxian_bot.bitget_live_gray import approve_bitget_live_gray
 from kxian_bot.brokers.base import create_broker
-from kxian_bot.config import load_config
+from kxian_bot.config import expected_live_confirmation, load_config
 from kxian_bot.dashboard import run_dashboard
 from kxian_bot.evidence import build_bitget_live_evidence, build_testnet_evidence, write_evidence
 from kxian_bot.exchange_health import run_exchange_health_check
@@ -477,19 +477,37 @@ def main() -> None:
         "live-setup-check",
         "bitget-live-readiness",
         "paper-dry-run",
-        "promote-profile-to-live",
-        "promote-profile-to-testnet",
         "run-once",
         "strategy-profile",
         "testnet-close-loop",
         "testnet-dry-run",
         "testnet-observe",
         "testnet-setup-check",
-        "approve-bitget-live-gray",
+        "archive-candles",
+        "backtest",
+        "batch-backtest",
+        "download-history",
+        "import-candles",
+        "market-diagnostics",
+        "prepare-samples",
+        "research-strategy",
+        "screen-samples",
+        "select-sample-intervals",
+        "select-samples",
+        "select-strategy",
+        "stress-backtest",
         "trading-rules",
         "trade-loop",
+        "walk-forward",
+        "walk-forward-samples",
     }
-    config = load_config(validate_execution=False) if args.command in relaxed_config_commands else load_config()
+    promote_commands = {"research-strategy", "select-strategy", "select-samples", "select-sample-intervals"}
+    needs_strict_config = args.command in promote_commands and bool(getattr(args, "promote", False))
+    config = (
+        load_config(validate_execution=False)
+        if args.command in relaxed_config_commands and not needs_strict_config
+        else load_config()
+    )
 
     try:
         if getattr(args, "exchange", None):
@@ -777,6 +795,13 @@ def main() -> None:
             return
 
         if args.command == "select-strategy":
+            _enforce_promote_scope_confirmation(
+                config,
+                promote=args.promote,
+                exchange=config.exchange,
+                symbol=config.symbol,
+                interval=_runtime_scope_interval(config.interval, args.resample_interval),
+            )
             runner = TradingRunner(config)
             segments = args.segments or config.min_walk_forward_segments
             result = runner.select_strategy(
@@ -799,6 +824,13 @@ def main() -> None:
             return
 
         if args.command == "select-samples":
+            _enforce_promote_scope_confirmation(
+                config,
+                promote=args.promote,
+                exchange=config.exchange,
+                symbol=config.symbol,
+                interval=_runtime_scope_interval(config.interval, args.resample_interval),
+            )
             runner = TradingRunner(config)
             segments = args.segments or config.min_walk_forward_segments
             result = runner.select_samples(
@@ -821,6 +853,15 @@ def main() -> None:
             return
 
         if args.command == "select-sample-intervals":
+            if args.promote:
+                for interval in parse_string_list(args.resample_intervals):
+                    _enforce_promote_scope_confirmation(
+                        config,
+                        promote=True,
+                        exchange=config.exchange,
+                        symbol=config.symbol,
+                        interval=_runtime_scope_interval(config.interval, interval),
+                    )
             runner = TradingRunner(config)
             segments = args.segments or config.min_walk_forward_segments
             result = runner.select_sample_intervals(
@@ -985,6 +1026,13 @@ def main() -> None:
             return
 
         if args.command == "research-strategy":
+            _enforce_promote_scope_confirmation(
+                config,
+                promote=args.promote,
+                exchange=args.exchange or config.exchange,
+                symbol=args.symbol or config.symbol,
+                interval=args.interval or config.interval,
+            )
             runner = TradingRunner(config)
             start_time = parse_timestamp_ms(args.start)
             end_time = parse_timestamp_ms(args.end)
@@ -1784,6 +1832,43 @@ def parse_timestamp_ms(value: str) -> int:
         return int(parsed_datetime.timestamp() * 1000)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("Expected YYYY-MM-DD, ISO datetime, seconds, or milliseconds") from exc
+
+
+def _enforce_promote_scope_confirmation(
+    config,
+    *,
+    promote: bool,
+    exchange: str,
+    symbol: str,
+    interval: str,
+) -> None:
+    if not promote or config.mode != "live" or config.live_dry_run:
+        return
+    scoped_config = config.model_copy(update={"exchange": exchange, "symbol": symbol, "interval": interval})
+    required = expected_live_confirmation(scoped_config)
+    if config.live_confirmation != required:
+        print(
+            json.dumps(
+                {
+                    "status": "blocked",
+                    "reason": "live_profile_promotion_confirmation_mismatch",
+                    "required_confirmation": required,
+                    "exchange": exchange,
+                    "symbol": symbol,
+                    "interval": interval,
+                    "will_submit_orders": False,
+                },
+                ensure_ascii=False,
+            )
+        )
+        raise SystemExit(2)
+
+
+def _runtime_scope_interval(source_interval: str, resample_interval: str | None) -> str:
+    value = (resample_interval or "").strip()
+    if not value or value.lower() in {"raw", "none", "native", "source"}:
+        return source_interval
+    return value
 
 
 if __name__ == "__main__":

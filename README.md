@@ -386,6 +386,8 @@ kxian-bot live-setup-check --timeout-seconds 5
 
 Bitget 路径额外要求 `KXIAN_EXCHANGE=bitget`、`KXIAN_USE_TESTNET=false`、`KXIAN_MAX_LIVE_ORDER_USDT=5`、`KXIAN_LIVE_CONFIRMATION=LIVE:bitget:BTCUSDT:4h`，并先执行 `trading-rules --refresh-from-exchange` 和 `approve-bitget-live-gray`。Bitget 灰度期间不使用 `test-order` 或 `run-once`，只允许一次 bounded `trade-loop --max-iterations 1 --sleep-seconds 0`。
 
+如果 `docs/Bitget策略证据研究报告.md` 仍显示 `blocked_before_bitget_live_canary`，或任一策略证据门禁未通过，必须停在只读研究阶段，不得执行批准、profile 写入或 canary 命令。
+
 ## Testnet manual orders
 
 Use `testnet` mode for manual test exchange requests. This is separate from `live` and should use testnet/demo API keys only.

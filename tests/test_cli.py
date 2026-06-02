@@ -487,7 +487,7 @@ class FakeRunner:
 
 def test_preflight_cli(monkeypatch, capsys, tmp_path):
     config = RuntimeConfig(db_path=str(tmp_path / "test.sqlite3"))
-    monkeypatch.setattr(cli, "load_config", lambda: config)
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
     monkeypatch.setattr(cli, "run_preflight", lambda received: {"status": "pass", "db_path": received.db_path})
     monkeypatch.setattr("sys.argv", ["kxian-bot", "preflight"])
 
@@ -1092,7 +1092,7 @@ def test_test_order_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_order_status_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "create_broker", lambda config: FakeBroker())
     monkeypatch.setattr("sys.argv", ["kxian-bot", "order-status", "--order-id", "123"])
 
@@ -1103,7 +1103,7 @@ def test_order_status_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_cancel_order_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "create_broker", lambda config: FakeBroker())
     monkeypatch.setattr("sys.argv", ["kxian-bot", "cancel-order", "--order-id", "123"])
 
@@ -1114,7 +1114,7 @@ def test_cancel_order_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_account_balance_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "create_broker", lambda config: FakeBroker())
     monkeypatch.setattr("sys.argv", ["kxian-bot", "account-balance", "--symbol", "BTCUSDT"])
 
@@ -1127,7 +1127,7 @@ def test_account_balance_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_sync_fills_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr("sys.argv", ["kxian-bot", "sync-fills", "--limit", "25"])
 
@@ -1167,7 +1167,6 @@ def test_testnet_dry_run_reports_missing_credentials_as_json(monkeypatch, capsys
             binance_api_key="",
             binance_api_secret="",
         )
-
     monkeypatch.setattr(cli, "load_config", fake_load_config)
     monkeypatch.setattr("sys.argv", ["kxian-bot", "testnet-dry-run"])
 
@@ -1577,7 +1576,7 @@ def test_paper_dry_run_records_loop_evidence_with_sqlite_data(tmp_path):
 
 
 def test_download_history_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -1608,7 +1607,7 @@ def test_download_history_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_import_candles_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -1633,7 +1632,7 @@ def test_import_candles_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_import_candle_archives_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -1674,7 +1673,7 @@ def test_import_candle_archives_cli_exits_when_import_fails(monkeypatch, capsys,
                 "file_count": 0,
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FailingArchiveRunner)
     monkeypatch.setattr("sys.argv", ["kxian-bot", "import-candle-archives", "--input-dir", "missing"])
 
@@ -1691,7 +1690,7 @@ def test_import_candle_archives_cli_exits_when_import_fails(monkeypatch, capsys,
 
 
 def test_prepare_samples_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -1740,7 +1739,7 @@ def test_prepare_samples_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_research_strategy_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -1816,7 +1815,7 @@ def test_research_strategy_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_research_strategy_cli_summary_only(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -1857,7 +1856,7 @@ def test_research_strategy_cli_exits_when_selection_fails(monkeypatch, capsys, t
                 "selection": {"status": "fail", "reason": "no_interval_passed_validation"},
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FailingResearchRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2068,7 +2067,7 @@ def test_batch_backtest_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_stress_backtest_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2095,7 +2094,7 @@ def test_stress_backtest_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_walk_forward_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2124,7 +2123,7 @@ def test_walk_forward_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_walk_forward_samples_cli_summary_only(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2168,7 +2167,7 @@ def test_walk_forward_samples_cli_exits_when_any_sample_fails(monkeypatch, capsy
                 "samples": [{"input_file": input_file, "status": "fail"} for input_file in input_files],
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FailingWalkForwardSamplesRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2193,7 +2192,7 @@ def test_walk_forward_samples_cli_exits_when_any_sample_fails(monkeypatch, capsy
 
 
 def test_validate_strategy_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2231,7 +2230,7 @@ def test_validate_strategy_cli_exits_when_gate_fails(monkeypatch, capsys, tmp_pa
                 "gates": {"strategy_gate": {"allowed": False, "reason": "strategy_gate_insufficient_trades"}},
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FailingValidationRunner)
     monkeypatch.setattr("sys.argv", ["kxian-bot", "validate-strategy", "--limit", "900"])
 
@@ -2248,7 +2247,7 @@ def test_validate_strategy_cli_exits_when_gate_fails(monkeypatch, capsys, tmp_pa
 
 
 def test_validate_samples_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2290,7 +2289,7 @@ def test_validate_samples_cli_exits_when_any_sample_fails(monkeypatch, capsys, t
                 "samples": [{"input_file": input_files[0], "status": "fail"}],
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FailingSamplesRunner)
     monkeypatch.setattr("sys.argv", ["kxian-bot", "validate-samples", "--input-files", "sample_data/january.csv"])
 
@@ -2307,7 +2306,7 @@ def test_validate_samples_cli_exits_when_any_sample_fails(monkeypatch, capsys, t
 
 
 def test_market_diagnostics_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2338,7 +2337,7 @@ def test_market_diagnostics_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_select_strategy_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2389,7 +2388,7 @@ def test_select_strategy_cli(monkeypatch, capsys, tmp_path):
 
 
 def test_select_strategy_cli_accepts_strategy_grid(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2440,7 +2439,7 @@ def test_select_strategy_cli_exits_when_no_candidate_passes(monkeypatch, capsys,
                 "candidates": [],
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FailingSelectionRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2467,7 +2466,7 @@ def test_select_strategy_cli_exits_when_no_candidate_passes(monkeypatch, capsys,
 
 
 def test_select_samples_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2549,7 +2548,7 @@ def test_select_samples_cli_exits_when_no_candidate_passes(monkeypatch, capsys, 
                 "candidates": [],
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FailingSampleSelectionRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2578,7 +2577,7 @@ def test_select_samples_cli_exits_when_no_candidate_passes(monkeypatch, capsys, 
 
 
 def test_select_sample_intervals_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2653,7 +2652,7 @@ def test_select_sample_intervals_cli_exits_when_no_interval_passes(monkeypatch, 
                 "intervals": [],
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FailingIntervalSelectionRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2684,7 +2683,7 @@ def test_select_sample_intervals_cli_exits_when_no_interval_passes(monkeypatch, 
 
 
 def test_screen_samples_cli(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2746,8 +2745,281 @@ def test_screen_samples_cli(monkeypatch, capsys, tmp_path):
     assert output["selected"]["runtime_interval"] is None
 
 
+def test_screen_samples_cli_uses_relaxed_config_for_live_research(monkeypatch, capsys, tmp_path):
+    received = {}
+
+    def fake_load_config(validate_execution=True):
+        received["validate_execution"] = validate_execution
+        return RuntimeConfig(
+            mode="live",
+            exchange="bitget",
+            symbol="BTCUSDT",
+            interval="2h",
+            use_testnet=False,
+            allow_live=True,
+            live_dry_run=False,
+            enable_live_autotrade=True,
+            live_confirmation="LIVE:bitget:BTCUSDT:4h",
+            live_credentials_confirmed=True,
+            max_live_order_usdt=5,
+            db_path=str(tmp_path / "test.sqlite3"),
+            bitget_api_key="key",
+            bitget_api_secret="secret",
+            bitget_api_passphrase="passphrase",
+        )
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "screen-samples",
+            "--input-files",
+            "sample_data/january.csv",
+            "--resample-intervals",
+            "raw",
+            "--short-windows",
+            "3",
+            "--long-windows",
+            "10",
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert received["validate_execution"] is False
+    assert output["status"] == "pass"
+    assert output["screen_only"] is True
+
+
+def test_select_samples_cli_promote_uses_strict_config(monkeypatch, capsys, tmp_path):
+    received = {}
+
+    def fake_load_config(validate_execution=True):
+        received["validate_execution"] = validate_execution
+        return RuntimeConfig(db_path=str(tmp_path / "test.sqlite3"))
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "select-samples",
+            "--input-files",
+            "sample_data/january.csv",
+            "--short-windows",
+            "3",
+            "--long-windows",
+            "10",
+            "--promote",
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert received["validate_execution"] is True
+    assert output["status"] == "pass"
+    assert output["promote"] is True
+
+
+def test_select_samples_cli_promote_blocks_mismatched_live_scope(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        use_testnet=False,
+        allow_live=True,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=5,
+        db_path=str(tmp_path / "test.sqlite3"),
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+    )
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "select-samples",
+            "--input-files",
+            "sample_data/january.csv",
+            "--resample-interval",
+            "2h",
+            "--short-windows",
+            "3",
+            "--long-windows",
+            "10",
+            "--promote",
+        ],
+    )
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected mismatched live promotion scope to be blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "blocked"
+    assert output["reason"] == "live_profile_promotion_confirmation_mismatch"
+    assert output["required_confirmation"] == "LIVE:bitget:BTCUSDT:2h"
+    assert output["will_submit_orders"] is False
+
+
+def test_select_samples_cli_promote_raw_scope_uses_source_interval(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        use_testnet=False,
+        allow_live=True,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=5,
+        db_path=str(tmp_path / "test.sqlite3"),
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+    )
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "select-samples",
+            "--input-files",
+            "sample_data/january.csv",
+            "--resample-interval",
+            "raw",
+            "--short-windows",
+            "3",
+            "--long-windows",
+            "10",
+            "--promote",
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "pass"
+    assert output["promote"] is True
+
+
+def test_select_strategy_cli_promote_raw_scope_uses_source_interval(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        use_testnet=False,
+        allow_live=True,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=5,
+        db_path=str(tmp_path / "test.sqlite3"),
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+    )
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "select-strategy",
+            "--input-file",
+            "sample_data/january.csv",
+            "--resample-interval",
+            "raw",
+            "--short-windows",
+            "3",
+            "--long-windows",
+            "10",
+            "--promote",
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "pass"
+    assert output["promote"] is True
+
+
+def test_select_sample_intervals_cli_promote_blocks_any_mismatched_live_interval(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        use_testnet=False,
+        allow_live=True,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=5,
+        db_path=str(tmp_path / "test.sqlite3"),
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+    )
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "select-sample-intervals",
+            "--input-files",
+            "sample_data/january.csv",
+            "--resample-intervals",
+            "raw,1h",
+            "--short-windows",
+            "3",
+            "--long-windows",
+            "10",
+            "--promote",
+        ],
+    )
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected mismatched interval promotion scope to be blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "blocked"
+    assert output["required_confirmation"] == "LIVE:bitget:BTCUSDT:1h"
+
+
 def test_screen_samples_cli_summary_only(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2830,7 +3102,7 @@ def test_screen_samples_cli_exits_when_no_prefilter_candidate_passes(monkeypatch
                 "candidates": [],
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", FailingScreenRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2894,7 +3166,7 @@ def test_screen_samples_summary_includes_load_error(monkeypatch, capsys, tmp_pat
                 "candidates": [],
             }
 
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(cli, "TradingRunner", LoadFailureScreenRunner)
     monkeypatch.setattr(
         "sys.argv",
@@ -2989,6 +3261,85 @@ def test_strategy_profile_cli_is_read_only_when_testnet_credentials_are_missing(
     output = json.loads(capsys.readouterr().out)
     assert output["profile_key"] == "testnet:binance:BTCUSDT:4h"
     assert output["parameters"]["short_window"] == 10
+
+
+def test_approve_bitget_live_gray_cli_uses_strict_config(monkeypatch, capsys, tmp_path):
+    received = {}
+    config = RuntimeConfig(db_path=str(tmp_path / "test.sqlite3"))
+
+    def fake_load_config(validate_execution=True):
+        received["validate_execution"] = validate_execution
+        return config
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(
+        cli,
+        "approve_bitget_live_gray",
+        lambda received_config, confirmation, updated_by="operator": {
+            "status": "pass",
+            "confirmation": confirmation,
+            "updated_by": updated_by,
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "approve-bitget-live-gray",
+            "--confirmation",
+            "LIVE:bitget:BTCUSDT:4h",
+            "--updated-by",
+            "operator",
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert received["validate_execution"] is True
+    assert output["status"] == "pass"
+
+
+def test_promote_profile_to_testnet_cli_uses_strict_config(monkeypatch, capsys, tmp_path):
+    received = {}
+    db_path = tmp_path / "test.sqlite3"
+
+    def fake_load_config(validate_execution=True):
+        received["validate_execution"] = validate_execution
+        return RuntimeConfig(db_path=str(db_path), interval="4h")
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "promote-profile-to-testnet"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected missing source profile to block promotion")
+
+    assert received["validate_execution"] is True
+
+
+def test_promote_profile_to_live_cli_uses_strict_config(monkeypatch, capsys, tmp_path):
+    received = {}
+    db_path = tmp_path / "test.sqlite3"
+
+    def fake_load_config(validate_execution=True):
+        received["validate_execution"] = validate_execution
+        return RuntimeConfig(db_path=str(db_path), interval="4h")
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "promote-profile-to-live"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected missing source profile to block promotion")
+
+    assert received["validate_execution"] is True
 
 
 def test_promote_profile_to_testnet_cli_outputs_promoted_profile(monkeypatch, capsys, tmp_path):
@@ -3210,7 +3561,7 @@ def test_promote_profile_to_live_cli_exits_when_testnet_observation_cycles_are_i
 
 def test_dashboard_cli(monkeypatch, tmp_path):
     called = {}
-    monkeypatch.setattr(cli, "load_config", lambda: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
     monkeypatch.setattr(
         cli,
         "run_dashboard",

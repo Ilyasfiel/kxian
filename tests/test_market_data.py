@@ -231,6 +231,44 @@ def test_bitget_fetch_historical_klines_walks_backwards_and_returns_ascending(mo
     assert calls[1][1]["endTime"] == "60000"
 
 
+def test_bitget_fetch_historical_2h_aggregates_from_supported_1h_granularity(monkeypatch):
+    calls = []
+    pages = [
+        {
+            "code": "00000",
+            "data": [
+                ["10800000", "13", "15", "12", "14", "4", "56", "56"],
+                ["7200000", "12", "14", "11", "13", "3", "39", "39"],
+                ["3600000", "11", "13", "10", "12", "2", "24", "24"],
+                ["0", "10", "12", "9", "11", "1", "11", "11"],
+            ],
+        }
+    ]
+
+    def fake_get(url, params, timeout):
+        calls.append((url, params))
+        return FakeResponse(pages[len(calls) - 1])
+
+    monkeypatch.setattr("kxian_bot.market_data.requests.get", fake_get)
+
+    candles = BitgetMarketDataClient().fetch_historical_klines(
+        "BTCUSDT",
+        "2h",
+        start_time=0,
+        end_time=10_800_000,
+        limit_per_request=4,
+    )
+
+    assert [candle.open_time for candle in candles] == [0, 7_200_000]
+    assert candles[0].open == 10
+    assert candles[0].high == 13
+    assert candles[0].low == 9
+    assert candles[0].close == 12
+    assert candles[0].volume == 3
+    assert calls[0][1]["granularity"] == "1h"
+    assert calls[0][1]["endTime"] == "14400000"
+
+
 def test_bitget_fetch_klines_uses_explicit_4h_granularity(monkeypatch):
     calls = []
 
@@ -244,6 +282,37 @@ def test_bitget_fetch_klines_uses_explicit_4h_granularity(monkeypatch):
 
     assert candles[0].open_time == 0
     assert calls[0][1]["granularity"] == "4h"
+
+
+def test_bitget_fetch_latest_2h_aggregates_from_supported_1h_granularity(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, timeout):
+        calls.append((url, params))
+        return FakeResponse(
+            {
+                "code": "00000",
+                "data": [
+                    ["10800000", "13", "15", "12", "14", "4", "56", "56"],
+                    ["7200000", "12", "14", "11", "13", "3", "39", "39"],
+                    ["3600000", "11", "13", "10", "12", "2", "24", "24"],
+                    ["0", "10", "12", "9", "11", "1", "11", "11"],
+                ],
+            }
+        )
+
+    monkeypatch.setattr("kxian_bot.market_data.requests.get", fake_get)
+
+    candles = BitgetMarketDataClient().fetch_klines("BTCUSDT", "2h", limit=2)
+
+    assert [candle.open_time for candle in candles] == [0, 7_200_000]
+    assert candles[1].open == 12
+    assert candles[1].high == 15
+    assert candles[1].low == 11
+    assert candles[1].close == 14
+    assert candles[1].volume == 7
+    assert calls[0][1]["granularity"] == "1h"
+    assert calls[0][1]["limit"] == 4
 
 
 def test_fetch_bitget_trading_rule_parses_required_fields(monkeypatch):
