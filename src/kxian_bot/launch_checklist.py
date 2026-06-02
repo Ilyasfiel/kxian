@@ -5,6 +5,7 @@ from typing import Any
 from kxian_bot.config import RuntimeConfig, expected_live_confirmation
 from kxian_bot.readiness import run_readiness
 from kxian_bot.storage import SQLiteStorage
+from kxian_bot.strategies.factory import RESEARCH_ONLY_STRATEGIES
 from kxian_bot.testnet_scope import (
     bitget_live_gray_next_steps,
     bitget_live_gray_scope_failures,
@@ -257,6 +258,8 @@ def _profile_check(
         }
     evidence = profile.get("evidence", {}) if isinstance(profile.get("evidence"), dict) else {}
     failures: list[str] = []
+    if _profile_is_research_only(profile):
+        failures.append("research_only_strategy_not_promotable")
     sample_validation = evidence.get("sample_validation")
     if not isinstance(sample_validation, dict) or sample_validation.get("status") != "pass":
         failures.append("missing_passing_sample_validation")
@@ -270,6 +273,7 @@ def _profile_check(
         "details": {
             "profile_key": profile.get("profile_key"),
             "failures": failures,
+            "strategy": profile.get("strategy"),
             "sample_validation_status": sample_validation.get("status") if isinstance(sample_validation, dict) else None,
             "promotion_target_mode": promotion.get("target_mode") if isinstance(promotion, dict) else None,
         },
@@ -288,6 +292,8 @@ def _live_profile_check(profile: dict[str, Any] | None) -> dict[str, Any]:
     promotion = evidence.get("promotion")
     observation = evidence.get("testnet_observation")
     failures: list[str] = []
+    if _profile_is_research_only(profile):
+        failures.append("research_only_strategy_not_promotable")
     if not isinstance(promotion, dict) or promotion.get("target_mode") != "live":
         failures.append("missing_live_promotion_evidence")
     if not isinstance(observation, dict):
@@ -299,6 +305,7 @@ def _live_profile_check(profile: dict[str, Any] | None) -> dict[str, Any]:
         "details": {
             "profile_key": profile.get("profile_key"),
             "failures": failures,
+            "strategy": profile.get("strategy"),
             "promotion_target_mode": promotion.get("target_mode") if isinstance(promotion, dict) else None,
         },
     }
@@ -333,6 +340,8 @@ def _bitget_live_profile_check(profile: dict[str, Any] | None) -> dict[str, Any]
     evidence = profile.get("evidence", {}) if isinstance(profile.get("evidence"), dict) else {}
     sample_validation = evidence.get("sample_validation")
     failures: list[str] = []
+    if _profile_is_research_only(profile):
+        failures.append("research_only_strategy_not_promotable")
     if not isinstance(sample_validation, dict) or sample_validation.get("status") != "pass":
         failures.append("missing_passing_sample_validation")
     live_gray = _bitget_live_gray_evidence(profile)
@@ -347,10 +356,17 @@ def _bitget_live_profile_check(profile: dict[str, Any] | None) -> dict[str, Any]
         "details": {
             "profile_key": profile.get("profile_key"),
             "failures": failures,
+            "strategy": profile.get("strategy"),
             "sample_validation_status": sample_validation.get("status") if isinstance(sample_validation, dict) else None,
             "bitget_live_gray_status": live_gray.get("status") if isinstance(live_gray, dict) else None,
         },
     }
+
+
+def _profile_is_research_only(profile: dict[str, Any]) -> bool:
+    parameters = profile.get("parameters", {}) if isinstance(profile.get("parameters"), dict) else {}
+    strategy = str(profile.get("strategy") or parameters.get("strategy") or "")
+    return strategy in RESEARCH_ONLY_STRATEGIES or parameters.get("research_only") is True
 
 
 def _bitget_live_gray_evidence(profile: dict[str, Any] | None) -> dict[str, Any]:

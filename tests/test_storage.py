@@ -273,6 +273,40 @@ def test_storage_promotes_validated_paper_profile_to_testnet(tmp_path):
     assert profile["evidence"]["promotion"]["source_profile_key"] == "paper:binance:BTCUSDT:4h"
 
 
+def test_storage_blocks_research_only_profile_promotion(tmp_path):
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    storage.upsert_strategy_profile(
+        mode="paper",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="adaptive_range_reclaim",
+        parameters={"short_window": 3, "long_window": 6, "research_only": True},
+        evidence={
+            "sample_validation": {
+                "status": "pass",
+                "sample_count": 2,
+                "passed_samples": 2,
+                "failed_samples": 0,
+            }
+        },
+        updated_by="test",
+    )
+
+    result = storage.promote_strategy_profile_to_mode(
+        source_mode="paper",
+        target_mode="testnet",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "research_only_strategy_not_promotable"
+    assert result["strategy"] == "adaptive_range_reclaim"
+    assert storage.active_strategy_profile("testnet", "binance", "BTCUSDT", "4h") is None
+
+
 def test_storage_blocks_profile_promotion_without_passing_sample_validation(tmp_path):
     storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
     storage.upsert_strategy_profile(

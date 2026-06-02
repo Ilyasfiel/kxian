@@ -330,6 +330,30 @@ def test_loads_values_from_dotenv(tmp_path, monkeypatch):
     assert config.slippage_rate == 0.001
 
 
+def test_load_config_can_skip_dotenv(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("KXIAN_SYMBOL=ETHUSDT\nKXIAN_EXCHANGE=okx\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("KXIAN_SYMBOL", raising=False)
+    monkeypatch.delenv("KXIAN_EXCHANGE", raising=False)
+
+    config = load_config(load_env=False)
+
+    assert config.symbol == "BTCUSDT"
+    assert config.exchange == "binance"
+
+
+def test_load_config_skip_dotenv_keeps_existing_environment(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("KXIAN_EXCHANGE=binance\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("KXIAN_EXCHANGE", "bitget")
+
+    config = load_config(load_env=False)
+
+    assert config.exchange == "bitget"
+
+
 def test_invalid_exchange_rejected(monkeypatch):
     monkeypatch.setenv("KXIAN_EXCHANGE", "coinbase")
 

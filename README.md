@@ -260,7 +260,14 @@ kxian-bot research-strategy --exchange binance --symbol BTCUSDT --interval 1m --
 ```
 
 `research-strategy` is research-only unless `--promote` is passed. If no interval passes all gates, it exits with code `2` and leaves the active strategy profile untouched. Its `summary` field highlights the best candidate, selected runtime interval, most common failure reasons, a `decision` of `promotable` or `blocked`, diagnostics, and recommended next actions so you can adjust data coverage, intervals, or parameter grids without digging through the full nested result.
-Research-only strategies such as `downtrend_breakdown_short` may appear in research output, but `--promote` returns `research_only_strategy_not_promotable` and leaves the active profile untouched.
+离线研究时可以在命令前加 `--no-dotenv`，并向 `screen-samples` 显式传入研究范围。注意：`--no-dotenv` 只是不自动加载项目 `.env` 文件，不会清空当前 PowerShell 会话里已经存在的 `KXIAN_*` 环境变量；如需完全隔离，请在干净 shell 中运行。
+
+```powershell
+kxian-bot --no-dotenv screen-samples --exchange bitget --symbol BTCUSDT --interval 4h --input-files "artifacts\bitget_4h_samples\*.csv" --resample-intervals raw --strategies adaptive_range_reclaim --short-windows 3,5,8,12 --long-windows 20,30,50,80 --summary-only
+```
+
+`downtrend_breakdown_short`、`adaptive_range_reclaim` 这类 research-only 策略可以出现在研究输出里，但不得进入执行链路：`--promote` 会返回 `research_only_strategy_not_promotable` 并保持 active profile 不变；`run-once` 和 `trade-loop` 会返回 `research_only_strategy_runtime_blocked`，即使它们是启动后从 SQLite active profile 覆盖进来的也会被拦截；profile 晋升和 Bitget live gray 批准同样拒绝 research-only profile，因此不能提交交易所订单。
+当前 Bitget `adaptive_range_reclaim` 在 `1h/2h/4h` 首批固定预算预筛中均为 `prefilter_pass_count=0`，因此仍停在只读研究阶段，不得进入 `select-samples`、profile 写入、灰度批准或 5U canary。
 Add `--summary-only` when you only want the compact decision output instead of the full prepare/selection tree.
 
 ## Batch backtest
@@ -384,9 +391,9 @@ kxian-bot live-setup-check --timeout-seconds 5
 
 单轮 canary 后必须复核账户、成交、挂单和 checklist；任何异常都按 `docs/实盘灰度操作手册.md` 回退，不允许继续扩大运行。
 
-Bitget 路径额外要求 `KXIAN_EXCHANGE=bitget`、`KXIAN_USE_TESTNET=false`、`KXIAN_MAX_LIVE_ORDER_USDT=5`、`KXIAN_LIVE_CONFIRMATION=LIVE:bitget:BTCUSDT:4h`，并先执行 `trading-rules --refresh-from-exchange` 和 `approve-bitget-live-gray`。Bitget 灰度期间不使用 `test-order` 或 `run-once`，只允许一次 bounded `trade-loop --max-iterations 1 --sleep-seconds 0`。
+live 模式下禁用 `test-order`，避免绕过 checklist、策略证据和单笔上限直接提交真实订单。Bitget 路径额外要求 `KXIAN_EXCHANGE=bitget`、`KXIAN_USE_TESTNET=false`、`KXIAN_MAX_LIVE_ORDER_USDT=5`、`KXIAN_LIVE_CONFIRMATION=LIVE:bitget:BTCUSDT:4h`，并先执行 `trading-rules --refresh-from-exchange` 和 `approve-bitget-live-gray`。Bitget 灰度期间不使用 `run-once`，只允许一次 bounded `trade-loop --max-iterations 1 --sleep-seconds 0`。
 
-如果 `docs/Bitget策略证据研究报告.md` 仍显示 `blocked_before_bitget_live_canary`，或任一策略证据门禁未通过，必须停在只读研究阶段，不得执行批准、profile 写入或 canary 命令。
+如果 `docs/Bitget策略证据研究报告.md` 仍显示 `blocked_before_bitget_live_canary`，或任一策略证据门禁未通过，必须停在只读研究阶段，不得执行批准、profile 写入、profile 晋升或 canary 命令。
 
 ## Testnet manual orders
 

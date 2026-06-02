@@ -1,4 +1,5 @@
 from kxian_bot.models import Candle
+from kxian_bot.strategies.adaptive_range_reclaim import AdaptiveRangeReclaimStrategy
 from kxian_bot.strategies.bollinger_mean_reversion import BollingerMeanReversionStrategy
 from kxian_bot.strategies.defensive_trend import DefensiveTrendStrategy
 from kxian_bot.strategies.downtrend_breakdown_short import DowntrendBreakdownShortStrategy
@@ -14,6 +15,7 @@ from kxian_bot.strategies.rsi_mean_reversion import RsiMeanReversionStrategy
 from kxian_bot.strategies.trend_filtered_ma_cross import TrendFilteredMovingAverageCrossStrategy
 from kxian_bot.strategies.trend_pullback import TrendPullbackStrategy
 from kxian_bot.strategies.volatility_breakout_trend import VolatilityBreakoutTrendStrategy
+from kxian_bot.strategies.factory import RESEARCH_ONLY_STRATEGIES, create_strategy
 
 
 def build_candle(idx: int, close: float) -> Candle:
@@ -457,3 +459,40 @@ def test_downtrend_breakdown_short_buys_to_cover_recovery():
     assert signal is not None
     assert signal.side == "buy"
     assert signal.reason == "downtrend_breakdown_short_exit"
+
+
+def test_adaptive_range_reclaim_waits_for_enough_context():
+    strategy = AdaptiveRangeReclaimStrategy(fast_window=3, context_window=6)
+
+    assert strategy.generate([build_candle(i, 100 + i) for i in range(6)]) is None
+
+
+def test_adaptive_range_reclaim_buys_after_range_reclaim():
+    strategy = AdaptiveRangeReclaimStrategy(fast_window=3, context_window=6)
+    prices = [100, 101, 100, 101, 100, 99, 97, 95, 96, 99]
+    candles = [build_candle(i, price) for i, price in enumerate(prices)]
+
+    signal = strategy.generate(candles)
+
+    assert signal is not None
+    assert signal.side == "buy"
+    assert signal.reason == "adaptive_range_reclaim_buy"
+
+
+def test_adaptive_range_reclaim_sells_at_range_target():
+    strategy = AdaptiveRangeReclaimStrategy(fast_window=3, context_window=6)
+    prices = [100, 99, 98, 97, 96, 98, 100, 104, 108, 112]
+    candles = [build_candle(i, price) for i, price in enumerate(prices)]
+
+    signal = strategy.generate(candles)
+
+    assert signal is not None
+    assert signal.side == "sell"
+    assert signal.reason == "adaptive_range_reclaim_sell"
+
+
+def test_factory_creates_adaptive_range_reclaim_as_research_only():
+    strategy = create_strategy("adaptive_range_reclaim", short_window=3, long_window=6, symbol="BTCUSDT")
+
+    assert isinstance(strategy, AdaptiveRangeReclaimStrategy)
+    assert "adaptive_range_reclaim" in RESEARCH_ONLY_STRATEGIES

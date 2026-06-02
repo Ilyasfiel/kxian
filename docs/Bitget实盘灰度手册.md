@@ -2,6 +2,8 @@
 
 本手册只覆盖 `Bitget Spot / BTCUSDT / 4h` 的小额实盘灰度。它不是 Binance Spot Testnet 闭环的替代品，也不把 Bitget 包装成测试网；当前 Bitget 路径是 live-only 灰度，目标是在人工确认后执行一次 5U 以内的 canary，再用查单、撤单、成交同步、账户同步和最终 checklist 复核。
 
+如果 `docs/Bitget策略证据研究报告.md` 仍显示 `blocked_before_bitget_live_canary`，或策略证据门禁仍未通过，本手册只执行到只读检查即停止，不得进入批准、profile 写入、canary 或真实下单步骤。
+
 ## 安全边界
 
 - 如果 `readiness` 仍被 `strategy_gate`、`sample_validation_gate`、`stress_gate`、`walk_forward_gate` 任一项阻断，必须停在只读研究阶段，不得执行 `approve-bitget-live-gray`、`trade-loop` 或任何 canary。

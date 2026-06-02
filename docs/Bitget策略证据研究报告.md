@@ -10,6 +10,8 @@
 
 2026-06-02 追加结论：`4h`、`2h`、`1h` 三个周期均未找到跨 5 段样本通过硬门禁的候选。当前阻断不是交易所接入问题，而是策略证据不足；不应写入 live profile，也不应进入 5U canary。
 
+2026-06-02 追加只读研究 harness：CLI 新增全局 `--no-dotenv`，研究筛选可显式跳过项目 `.env` 自动加载，并通过 `screen-samples --exchange/--symbol/--interval` 固定离线证据 scope。注意 `--no-dotenv` 不会清空当前 shell 已有的 `KXIAN_*` 环境变量；完全隔离研究仍需使用干净 shell。新增研究专用现货策略 `adaptive_range_reclaim`，但它被标记为 research-only，`run-once`、`trade-loop` 会返回 `research_only_strategy_runtime_blocked`，包括 active profile 覆盖后的运行路径；任何 `--promote`、profile 晋升、Bitget live gray 批准路径都拒绝 research-only profile。
+
 ## 只读状态
 
 2026-06-02 的只读复核结果：
@@ -71,6 +73,16 @@
 
 因此，当前不能进入 `select-samples` 正式验证阶段；也没有任何候选具备 profile 写入资格。
 
+2026-06-02 追加 `adaptive_range_reclaim` 首批固定预算预筛：
+
+| 周期 | 命令安全边界 | 样本数 | 评估组合 | 通过候选 | best failed candidate | 结论 |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| 1h | `--no-dotenv`、离线 CSV、`exchange=bitget` | 5 | 40 / 128 | 0 | 586 笔、return -7.9583%、PF 0.4646 | 收益过低 |
+| 2h | `--no-dotenv`、离线 CSV、`exchange=bitget` | 5 | 40 / 128 | 0 | 334 笔、return -4.8238%、PF 0.4700 | 收益过低 |
+| 4h | `--no-dotenv`、离线 CSV、`exchange=bitget` | 5 | 40 / 128 | 0 | 202 笔、return -1.3889%、PF 0.9290 | 收益过低 |
+
+本次只跑首批 40 组固定预算，不把失败结果扩展成结论外推。它只说明该研究假设在当前预算下没有进入 `select-samples` 的资格；后续若继续探索，只能扩大新的假设或重新冻结参数预算，不能降低门禁换取通过。
+
 ## 策略假设
 
 旧方向暂停：不继续围绕 BTCUSDT / 4h / long-only 的旧均线参数做无限微调。
@@ -82,6 +94,7 @@
 - 防守入场假设：牺牲交易频率换取更低回撤，但必须满足最低交易数门禁。
 - 多周期确认假设：4h 信号引入更高周期趋势确认，避免单周期噪声。
 - 研究-only 空头假设：可用于解释下跌段，但在现货实盘路径中不能直接作为可上线做空策略。
+- 研究-only 区间回收假设：`adaptive_range_reclaim` 用于观察下跌或震荡后的回收形态，只能作为离线候选筛选器，不能写入 active profile，也不能进入现货执行入口。
 - 低频突破改造假设：如果继续保留突破类策略，必须明确提高样本外交易数，避免 2 到 18 笔交易的统计置信度不足。
 - 资金费率无关假设：当前是现货路径，不得引入合约资金费率或杠杆收益来美化结果。
 
@@ -118,6 +131,7 @@ Bitget 现货灰度只允许现货语义。任何做空、杠杆、合约策略�
 - `kxian-bot launch-checklist --target live`
 - `kxian-bot exchange-health --timeout-seconds 5`
 - `kxian-bot screen-samples --summary-only`
+- `kxian-bot --no-dotenv screen-samples --exchange bitget --symbol BTCUSDT --interval <1h|2h|4h> --summary-only`
 - `kxian-bot select-samples`，但不得带 `--promote`
 - `kxian-bot backtest`
 - `kxian-bot stress-backtest`
@@ -131,6 +145,8 @@ Bitget 现货灰度只允许现货语义。任何做空、杠杆、合约策略�
 - `kxian-bot approve-bitget-live-gray`
 - `kxian-bot trade-loop`
 - `kxian-bot run-once`
+- 使用 `adaptive_range_reclaim` 或其他 research-only 策略执行 `run-once` / `trade-loop`
+- 将 research-only profile 晋升到 testnet/live，或用于 Bitget live gray 批准
 - `kxian-bot test-order`
 - `kxian-bot promote-profile-to-live`
 - 任何带 `--promote` 的失败候选推进命令

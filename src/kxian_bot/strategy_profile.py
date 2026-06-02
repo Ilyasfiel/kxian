@@ -52,6 +52,20 @@ def active_profile_payload(
     updated_by: str,
     updated_at: float,
 ) -> dict[str, Any]:
+    profile_parameters = {
+        "strategy": strategy,
+        "short_window": int(parameters["short_window"]),
+        "long_window": int(parameters["long_window"]),
+        "stop_loss_pct": float(parameters.get("stop_loss_pct", 0.0)),
+        "take_profit_pct": float(parameters.get("take_profit_pct", 0.0)),
+        "trailing_stop_pct": float(parameters.get("trailing_stop_pct", 0.0)),
+        "cooldown_seconds": int(parameters.get("cooldown_seconds", 0)),
+    }
+    if parameters.get("research_only") is True:
+        profile_parameters["research_only"] = True
+    if parameters.get("position_mode"):
+        profile_parameters["position_mode"] = str(parameters["position_mode"])
+
     return {
         "profile_key": profile_key(mode, exchange, symbol, interval),
         "updated_at": updated_at,
@@ -60,15 +74,7 @@ def active_profile_payload(
         "symbol": symbol,
         "interval": interval,
         "strategy": strategy,
-        "parameters": {
-            "strategy": strategy,
-            "short_window": int(parameters["short_window"]),
-            "long_window": int(parameters["long_window"]),
-            "stop_loss_pct": float(parameters.get("stop_loss_pct", 0.0)),
-            "take_profit_pct": float(parameters.get("take_profit_pct", 0.0)),
-            "trailing_stop_pct": float(parameters.get("trailing_stop_pct", 0.0)),
-            "cooldown_seconds": int(parameters.get("cooldown_seconds", 0)),
-        },
+        "parameters": profile_parameters,
         "evidence": evidence,
         "active": True,
         "updated_by": updated_by,

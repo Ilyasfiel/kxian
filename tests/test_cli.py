@@ -431,6 +431,9 @@ class FakeRunner:
         return {
             "status": "pass",
             "reason": "prefilter_candidate_found",
+            "exchange": self.config.exchange,
+            "symbol": self.config.symbol,
+            "interval": self.config.interval,
             "limit": limit,
             "segments": segments,
             "input_files": input_files,
@@ -495,6 +498,26 @@ def test_preflight_cli(monkeypatch, capsys, tmp_path):
 
     output = json.loads(capsys.readouterr().out)
     assert output == {"status": "pass", "db_path": str(tmp_path / "test.sqlite3")}
+
+
+def test_cli_no_dotenv_disables_dotenv_loading(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(db_path=str(tmp_path / "test.sqlite3"))
+    received = {}
+
+    def fake_load_config(validate_execution=True, load_env=True):
+        received["validate_execution"] = validate_execution
+        received["load_env"] = load_env
+        return config
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(cli, "run_preflight", lambda received_config: {"status": "pass", "db_path": received_config.db_path})
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "--no-dotenv", "preflight"])
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "pass"
+    assert received == {"validate_execution": True, "load_env": False}
 
 
 def test_readiness_cli_uses_relaxed_config_and_redacts_credentials(monkeypatch, capsys, tmp_path):
@@ -1051,6 +1074,60 @@ def test_run_once_cli_uses_relaxed_config_for_structured_launch_gate(monkeypatch
     assert output["checklist"]["reason"] == "testnet_launch_blocked"
 
 
+def test_run_once_blocks_research_only_strategy(monkeypatch, capsys, tmp_path):
+    FakeRunner.instances = []
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda validate_execution=True: RuntimeConfig(
+            db_path=str(tmp_path / "test.sqlite3"),
+            strategy="adaptive_range_reclaim",
+        ),
+    )
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "run-once"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected run-once to block research-only strategy")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "blocked"
+    assert output["reason"] == "research_only_strategy_runtime_blocked"
+    assert output["strategy"] == "adaptive_range_reclaim"
+    assert output["will_submit_orders"] is False
+    assert FakeRunner.instances == []
+
+
+def test_run_once_exits_when_runner_blocks_research_only_active_profile(monkeypatch, capsys, tmp_path):
+    class BlockingRunner(FakeRunner):
+        def run_once(self):
+            return {
+                "status": "blocked",
+                "reason": "research_only_strategy_runtime_blocked",
+                "strategy": "adaptive_range_reclaim",
+                "will_submit_orders": False,
+            }
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "TradingRunner", BlockingRunner)
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "run-once"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected run-once to exit when runner returns blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "blocked"
+    assert output["reason"] == "research_only_strategy_runtime_blocked"
+
+
 def test_pause_resume_and_status_cli(monkeypatch, capsys, tmp_path):
     db_path = tmp_path / "test.sqlite3"
     monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(db_path)))
@@ -1089,6 +1166,35 @@ def test_test_order_cli(monkeypatch, capsys, tmp_path):
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "submitted"
     assert output["exchange_order_id"] == "123"
+
+
+def test_live_test_order_cli_is_disabled_for_all_exchanges(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda validate_execution=True: RuntimeConfig(
+            mode="live",
+            exchange="binance",
+            db_path=str(tmp_path / "test.sqlite3"),
+        ),
+    )
+    monkeypatch.setattr(cli, "create_broker", lambda config: (_ for _ in ()).throw(AssertionError("broker must not be created")))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["kxian-bot", "test-order", "--side", "buy", "--quantity", "0.01", "--price", "100"],
+    )
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected live test-order to be disabled")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "blocked"
+    assert output["reason"] == "live_test_order_disabled"
+    assert output["will_submit_orders"] is False
 
 
 def test_order_status_cli(monkeypatch, capsys, tmp_path):
@@ -2690,6 +2796,12 @@ def test_screen_samples_cli(monkeypatch, capsys, tmp_path):
         [
             "kxian-bot",
             "screen-samples",
+            "--exchange",
+            "bitget",
+            "--symbol",
+            "ETHUSDT",
+            "--interval",
+            "4h",
             "--limit",
             "900",
             "--segments",
@@ -2726,6 +2838,9 @@ def test_screen_samples_cli(monkeypatch, capsys, tmp_path):
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "pass"
     assert output["reason"] == "prefilter_candidate_found"
+    assert output["exchange"] == "bitget"
+    assert output["symbol"] == "ETHUSDT"
+    assert output["interval"] == "4h"
     assert output["screen_only"] is True
     assert output["limit"] == 900
     assert output["segments"] == 4
@@ -3697,6 +3812,65 @@ def test_trade_loop_cli(monkeypatch, capsys, tmp_path):
     assert output["loop_id"] == "loop-1"
     assert output["iterations"] == 2
     assert output["sleep_seconds"] == 0.0
+
+
+def test_trade_loop_blocks_research_only_strategy(monkeypatch, capsys, tmp_path):
+    FakeRunner.instances = []
+    monkeypatch.setattr(
+        cli,
+        "load_config",
+        lambda validate_execution=True: RuntimeConfig(
+            db_path=str(tmp_path / "test.sqlite3"),
+            strategy="adaptive_range_reclaim",
+        ),
+    )
+    monkeypatch.setattr(cli, "TradingRunner", FakeRunner)
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "trade-loop", "--max-iterations", "1", "--sleep-seconds", "0"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected trade-loop to block research-only strategy")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "blocked"
+    assert output["reason"] == "research_only_strategy_runtime_blocked"
+    assert output["strategy"] == "adaptive_range_reclaim"
+    assert output["will_submit_orders"] is False
+    assert FakeRunner.instances == []
+
+
+def test_trade_loop_exits_when_runner_blocks_research_only_active_profile(monkeypatch, capsys, tmp_path):
+    class BlockingRunner(FakeRunner):
+        def run_loop(self, max_iterations=None, sleep_seconds=None):
+            return {
+                "loop_id": "loop-1",
+                "iterations": 0,
+                "last_result": {
+                    "status": "blocked",
+                    "reason": "research_only_strategy_runtime_blocked",
+                    "strategy": "adaptive_range_reclaim",
+                    "will_submit_orders": False,
+                },
+            }
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: RuntimeConfig(db_path=str(tmp_path / "test.sqlite3")))
+    monkeypatch.setattr(cli, "TradingRunner", BlockingRunner)
+    monkeypatch.setattr(cli, "run_preflight", lambda config: {"status": "pass", "checks": []})
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "trade-loop", "--max-iterations", "1", "--sleep-seconds", "0"])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected trade-loop to exit when runner returns blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["last_result"]["status"] == "blocked"
+    assert output["last_result"]["reason"] == "research_only_strategy_runtime_blocked"
 
 
 def test_trade_loop_cli_blocks_when_preflight_fails(monkeypatch, capsys, tmp_path):

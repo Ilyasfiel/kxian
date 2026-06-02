@@ -30,6 +30,7 @@ StrategyName = Literal[
     "regime_adaptive_long",
     "volatility_breakout_trend",
     "downtrend_breakdown_short",
+    "adaptive_range_reclaim",
 ]
 
 
@@ -117,8 +118,9 @@ def load_dotenv(path: str = ".env") -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
-def load_config(validate_execution: bool = True) -> RuntimeConfig:
-    load_dotenv()
+def load_config(validate_execution: bool = True, load_env: bool = True) -> RuntimeConfig:
+    if load_env:
+        load_dotenv()
     try:
         config = RuntimeConfig(
             mode=os.getenv("KXIAN_MODE", "paper"),

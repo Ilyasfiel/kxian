@@ -70,6 +70,10 @@ class TradingRunner:
         self._restore_risk_state()
 
     def run_once(self) -> dict:
+        research_only_gate = self._research_only_runtime_gate()
+        if research_only_gate is not None:
+            return research_only_gate
+
         control = self.storage.automation_control_status(
             self.config.mode,
             self.config.exchange,
@@ -146,6 +150,17 @@ class TradingRunner:
         sleep_seconds = self.config.poll_seconds if sleep_seconds is None else sleep_seconds
         last_result: dict = {}
         consecutive_failures = 0
+        research_only_gate = self._research_only_runtime_gate()
+        if research_only_gate is not None:
+            self._record_loop_event(
+                loop_id,
+                0,
+                "blocked",
+                "research-only strategy is blocked from runtime execution",
+                research_only_gate,
+            )
+            return {"loop_id": loop_id, "iterations": 0, "last_result": research_only_gate}
+
         lock = self.storage.acquire_loop_lock(
             self.config.mode,
             self.config.exchange,
@@ -243,6 +258,24 @@ class TradingRunner:
 
     def _loop_circuit_breaker_tripped(self, consecutive_failures: int) -> bool:
         return self.config.max_consecutive_loop_errors > 0 and consecutive_failures >= self.config.max_consecutive_loop_errors
+
+    def _research_only_runtime_gate(self) -> dict | None:
+        if self.config.strategy not in RESEARCH_ONLY_STRATEGIES:
+            return None
+        return {
+            "status": "blocked",
+            "reason": "research_only_strategy_runtime_blocked",
+            "mode": self.config.mode,
+            "exchange": self.config.exchange,
+            "symbol": self.config.symbol,
+            "interval": self.config.interval,
+            "strategy": self.config.strategy,
+            "will_submit_orders": False,
+            "next_steps": [
+                "use backtest or screen-samples for research-only strategies",
+                "choose a tradable strategy before run-once or trade-loop",
+            ],
+        }
 
     def backtest(self, limit: int, input_file: str | None = None, resample_interval: str | None = None) -> dict:
         candles = self._load_validation_candles(limit=limit, input_file=input_file, resample_interval=resample_interval)
@@ -2613,6 +2646,8 @@ class TradingRunner:
         )
         if self.config.strategy in SYNTHETIC_SHORT_STRATEGIES:
             parameters["position_mode"] = "synthetic_short"
+            parameters["research_only"] = True
+        elif self.config.strategy in RESEARCH_ONLY_STRATEGIES:
             parameters["research_only"] = True
         return parameters
 

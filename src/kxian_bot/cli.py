@@ -5,6 +5,7 @@ import contextlib
 from datetime import date, datetime, time as datetime_time, timezone
 from glob import glob
 import io
+import inspect
 import json
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from kxian_bot.readiness import run_readiness
 from kxian_bot.runner import TradingRunner
 from kxian_bot.storage import SQLiteStorage
 from kxian_bot.strategy_parameters import strategy_parameters
-from kxian_bot.strategies.factory import SUPPORTED_STRATEGIES
+from kxian_bot.strategies.factory import RESEARCH_ONLY_STRATEGIES, SUPPORTED_STRATEGIES
 from kxian_bot.testnet_dry_run import run_testnet_dry_run, run_testnet_observation
 from kxian_bot.testnet_close_loop import run_testnet_close_loop
 from kxian_bot.testnet_setup import run_testnet_setup_check
@@ -31,6 +32,11 @@ from kxian_bot.testnet_setup import run_testnet_setup_check
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kxian-bot")
+    parser.add_argument(
+        "--no-dotenv",
+        action="store_true",
+        help="Do not load .env for isolated research and smoke runs.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("run-once")
@@ -223,6 +229,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     screen_samples_parser = subparsers.add_parser("screen-samples")
+    screen_samples_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], default=None)
+    screen_samples_parser.add_argument("--symbol", type=str, default=None)
+    screen_samples_parser.add_argument("--interval", type=str, default=None)
     screen_samples_parser.add_argument("--limit", type=int, default=3000)
     screen_samples_parser.add_argument("--segments", type=int, default=None)
     screen_samples_parser.add_argument("--input-files", required=True)
@@ -504,9 +513,9 @@ def main() -> None:
     promote_commands = {"research-strategy", "select-strategy", "select-samples", "select-sample-intervals"}
     needs_strict_config = args.command in promote_commands and bool(getattr(args, "promote", False))
     config = (
-        load_config(validate_execution=False)
+        _load_cli_config(validate_execution=False, load_env=not args.no_dotenv)
         if args.command in relaxed_config_commands and not needs_strict_config
-        else load_config()
+        else _load_cli_config(validate_execution=True, load_env=not args.no_dotenv)
     )
 
     try:
@@ -514,6 +523,10 @@ def main() -> None:
             config = config.model_copy(update={"exchange": args.exchange})
 
         if args.command == "run-once":
+            research_strategy_gate = _research_only_runtime_gate(config)
+            if research_strategy_gate is not None:
+                print(json.dumps(research_strategy_gate, ensure_ascii=False))
+                raise SystemExit(2)
             bitget_run_once_gate = _bitget_live_run_once_gate(config)
             if bitget_run_once_gate is not None:
                 print(json.dumps(bitget_run_once_gate, ensure_ascii=False))
@@ -523,7 +536,10 @@ def main() -> None:
                 print(json.dumps(gate, ensure_ascii=False))
                 raise SystemExit(2)
             runner = TradingRunner(config)
-            print(json.dumps(runner.run_once(), ensure_ascii=False))
+            result = runner.run_once()
+            print(json.dumps(result, ensure_ascii=False))
+            if _runtime_result_requires_failure_exit(result):
+                raise SystemExit(2)
             return
 
         if args.command == "preflight":
@@ -645,6 +661,10 @@ def main() -> None:
             return
 
         if args.command == "trade-loop":
+            research_strategy_gate = _research_only_runtime_gate(config)
+            if research_strategy_gate is not None:
+                print(json.dumps(research_strategy_gate, ensure_ascii=False))
+                raise SystemExit(2)
             bitget_iteration_gate = _bitget_live_iteration_gate(config, args.max_iterations)
             if bitget_iteration_gate is not None:
                 print(json.dumps(bitget_iteration_gate, ensure_ascii=False))
@@ -666,7 +686,7 @@ def main() -> None:
             runner = TradingRunner(config)
             result = runner.run_loop(args.max_iterations, args.sleep_seconds)
             print(json.dumps(result, ensure_ascii=False))
-            if result.get("last_result", {}).get("reason") in {"loop_lock_active", "loop_circuit_breaker_tripped"}:
+            if _runtime_result_requires_failure_exit(result.get("last_result", {})):
                 raise SystemExit(2)
             return
 
@@ -884,7 +904,18 @@ def main() -> None:
             return
 
         if args.command == "screen-samples":
-            runner = TradingRunner(config)
+            runner_config = config.model_copy(
+                update={
+                    key: value
+                    for key, value in {
+                        "exchange": args.exchange,
+                        "symbol": args.symbol,
+                        "interval": args.interval,
+                    }.items()
+                    if value
+                }
+            )
+            runner = TradingRunner(runner_config)
             segments = args.segments or config.min_walk_forward_segments
             result = runner.screen_samples(
                 limit=args.limit,
@@ -1127,9 +1158,9 @@ def main() -> None:
             return
 
         if args.command == "test-order":
-            bitget_test_order_gate = _bitget_live_test_order_gate(config)
-            if bitget_test_order_gate is not None:
-                print(json.dumps(bitget_test_order_gate, ensure_ascii=False))
+            live_test_order_gate = _live_test_order_gate(config)
+            if live_test_order_gate is not None:
+                print(json.dumps(live_test_order_gate, ensure_ascii=False))
                 raise SystemExit(2)
             broker = create_broker(config)
             storage = SQLiteStorage(config.db_path)
@@ -1182,6 +1213,42 @@ def main() -> None:
         raise SystemExit(2) from exc
 
     parser.error(f"Unknown command: {args.command}")
+
+
+def _load_cli_config(validate_execution: bool, load_env: bool):
+    parameters = inspect.signature(load_config).parameters
+    if "load_env" in parameters:
+        return load_config(validate_execution=validate_execution, load_env=load_env)
+    return load_config(validate_execution=validate_execution)
+
+
+def _research_only_runtime_gate(config) -> dict | None:
+    if config.strategy not in RESEARCH_ONLY_STRATEGIES:
+        return None
+    return {
+        "status": "blocked",
+        "reason": "research_only_strategy_runtime_blocked",
+        "mode": config.mode,
+        "exchange": config.exchange,
+        "symbol": config.symbol,
+        "interval": config.interval,
+        "strategy": config.strategy,
+        "will_submit_orders": False,
+        "allowed_commands": [
+            "backtest",
+            "stress-backtest",
+            "walk-forward",
+            "validate-strategy",
+            "screen-samples",
+            "select-strategy without --promote",
+            "select-samples without --promote",
+            "research-strategy without --promote",
+        ],
+        "next_steps": [
+            "use research commands with --no-dotenv and explicit offline input files",
+            "choose a tradable strategy before run-once or trade-loop",
+        ],
+    }
 
 
 def _run_paper_dry_run(config, input_file: str | None, max_iterations: int, sleep_seconds: float) -> dict:
@@ -1331,6 +1398,27 @@ def _bitget_live_test_order_gate(config) -> dict | None:
     }
 
 
+def _live_test_order_gate(config) -> dict | None:
+    if config.mode != "live":
+        return None
+    bitget_gate = _bitget_live_test_order_gate(config)
+    if bitget_gate is not None:
+        return bitget_gate
+    return {
+        "status": "blocked",
+        "reason": "live_test_order_disabled",
+        "mode": config.mode,
+        "exchange": config.exchange,
+        "symbol": config.symbol,
+        "interval": config.interval,
+        "will_submit_orders": False,
+        "next_steps": [
+            "use live-setup-check and launch-checklist before any live execution",
+            "use trade-loop with the bounded canary flow instead of test-order for live mode",
+        ],
+    }
+
+
 def _bitget_live_run_once_gate(config) -> dict | None:
     if config.mode != "live" or config.exchange != "bitget":
         return None
@@ -1361,6 +1449,15 @@ def _bitget_first_canary_ready(config, checklist: dict) -> bool:
         return False
     failures = check.get("details", {}).get("failures", [])
     return failures == ["missing_bitget_live_canary_order"]
+
+
+def _runtime_result_requires_failure_exit(result: dict) -> bool:
+    status = result.get("status")
+    if status in {"blocked", "error"}:
+        return True
+    if status == "rejected":
+        return True
+    return result.get("reason") in {"loop_lock_active", "loop_circuit_breaker_tripped"}
 
 
 def _paper_dry_run_evidence(storage: SQLiteStorage, config) -> dict:

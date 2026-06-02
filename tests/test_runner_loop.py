@@ -314,6 +314,74 @@ def test_runner_does_not_trade_when_automation_is_paused(tmp_path):
     assert storage.fetch_all("fills") == []
 
 
+def test_runner_blocks_research_only_active_profile_before_run_once(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    storage.upsert_strategy_profile(
+        mode="paper",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="1m",
+        strategy="adaptive_range_reclaim",
+        parameters={"short_window": 3, "long_window": 6, "research_only": True},
+        evidence={"sample_validation": SAMPLE_VALIDATION_EVIDENCE},
+        updated_by="test",
+    )
+    runner = TradingRunner(
+        RuntimeConfig(
+            db_path=str(db_path),
+            market_data_source="sqlite",
+            strategy="moving_average_cross",
+            short_window=3,
+            long_window=6,
+            min_order_usdt=1,
+        )
+    )
+
+    result = runner.run_once()
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "research_only_strategy_runtime_blocked"
+    assert result["strategy"] == "adaptive_range_reclaim"
+    assert result["will_submit_orders"] is False
+    assert storage.fetch_all("fills") == []
+    assert storage.fetch_all("strategy_signals") == []
+
+
+def test_runner_blocks_research_only_active_profile_before_loop_lock(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    storage.upsert_strategy_profile(
+        mode="paper",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="1m",
+        strategy="adaptive_range_reclaim",
+        parameters={"short_window": 3, "long_window": 6, "research_only": True},
+        evidence={"sample_validation": SAMPLE_VALIDATION_EVIDENCE},
+        updated_by="test",
+    )
+    runner = TradingRunner(
+        RuntimeConfig(
+            db_path=str(db_path),
+            market_data_source="sqlite",
+            strategy="moving_average_cross",
+            short_window=3,
+            long_window=6,
+            min_order_usdt=1,
+        )
+    )
+
+    result = runner.run_loop(max_iterations=1, sleep_seconds=0)
+
+    events = storage.list_loop_events()
+    assert result["iterations"] == 0
+    assert result["last_result"]["reason"] == "research_only_strategy_runtime_blocked"
+    assert events[0]["iteration"] == 0
+    assert events[0]["status"] == "blocked"
+    assert storage.fetch_all("loop_locks") == []
+
+
 def test_runner_normalizes_order_to_trading_rule_before_fill(tmp_path):
     db_path = tmp_path / "kxian.sqlite3"
     storage = SQLiteStorage(db_path)

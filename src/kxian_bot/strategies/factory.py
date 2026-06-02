@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from kxian_bot.strategies.adaptive_range_reclaim import AdaptiveRangeReclaimStrategy
 from kxian_bot.strategies.bollinger_mean_reversion import BollingerMeanReversionStrategy
 from kxian_bot.strategies.defensive_trend import DefensiveTrendStrategy
 from kxian_bot.strategies.downtrend_breakdown_short import DowntrendBreakdownShortStrategy
@@ -33,9 +34,10 @@ SUPPORTED_STRATEGIES = (
     "regime_adaptive_long",
     "volatility_breakout_trend",
     "downtrend_breakdown_short",
+    "adaptive_range_reclaim",
 )
 
-RESEARCH_ONLY_STRATEGIES = frozenset({"downtrend_breakdown_short"})
+RESEARCH_ONLY_STRATEGIES = frozenset({"downtrend_breakdown_short", "adaptive_range_reclaim"})
 
 
 def create_strategy(name: str, short_window: int, long_window: int, symbol: str):
@@ -69,4 +71,6 @@ def create_strategy(name: str, short_window: int, long_window: int, symbol: str)
         return VolatilityBreakoutTrendStrategy(breakout_window=short_window, trend_window=long_window, symbol=symbol)
     if name == "downtrend_breakdown_short":
         return DowntrendBreakdownShortStrategy(breakdown_window=short_window, trend_window=long_window, symbol=symbol)
+    if name == "adaptive_range_reclaim":
+        return AdaptiveRangeReclaimStrategy(fast_window=short_window, context_window=long_window, symbol=symbol)
     raise ValueError(f"Unsupported strategy: {name}")

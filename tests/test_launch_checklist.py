@@ -232,6 +232,53 @@ def test_launch_checklist_passes_live_after_profile_and_observations_exist(tmp_p
     assert "KXIAN_LIVE_CONFIRMATION=LIVE:binance:BTCUSDT:4h" in result["next_steps"][0]
 
 
+def test_launch_checklist_blocks_research_only_live_profile(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    _record_ready_evidence(storage, mode="testnet")
+    _record_observation(storage, execute_loop=False)
+    _record_observation(storage, execute_loop=True)
+    storage.upsert_strategy_profile(
+        mode="live",
+        exchange="binance",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="adaptive_range_reclaim",
+        parameters={"strategy": "adaptive_range_reclaim", "short_window": 3, "long_window": 6, "research_only": True},
+        evidence={
+            "sample_validation": SAMPLE_VALIDATION_EVIDENCE,
+            "promotion": {"source_profile_key": "testnet:binance:BTCUSDT:4h", "target_mode": "live"},
+            "testnet_observation": {"non_ordering": {"status": "pass"}, "bounded_order": {"status": "pass"}},
+        },
+        updated_by="test",
+    )
+    config = RuntimeConfig(
+        mode="live",
+        db_path=str(db_path),
+        market_data_source="sqlite",
+        interval="4h",
+        short_window=10,
+        long_window=30,
+        min_order_usdt=1,
+        allow_live=True,
+        use_testnet=False,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:binance:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        binance_api_key="key",
+        binance_api_secret="secret",
+    )
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+    profile_check = next(check for check in result["checks"] if check["name"] == "live_profile")
+
+    assert result["status"] == "blocked"
+    assert profile_check["status"] == "fail"
+    assert profile_check["details"]["strategy"] == "adaptive_range_reclaim"
+    assert "research_only_strategy_not_promotable" in profile_check["details"]["failures"]
+
+
 def test_launch_checklist_does_not_complete_testnet_when_order_observation_has_open_orders(tmp_path):
     db_path = tmp_path / "kxian.sqlite3"
     storage = SQLiteStorage(db_path)
@@ -495,6 +542,42 @@ def test_launch_checklist_blocks_bitget_live_profile_without_approval_time(tmp_p
 
     assert result["status"] == "blocked"
     assert "missing_bitget_live_gray_approval_time" in profile_check["details"]["failures"]
+
+
+def test_launch_checklist_blocks_bitget_live_research_only_profile(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    storage.upsert_candles(
+        [
+            Candle(open_time=i, open=10 + i, high=10 + i, low=10 + i, close=10 + i, volume=1, close_time=i + 1)
+            for i in range(40)
+        ],
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+    )
+    storage.upsert_strategy_profile(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="adaptive_range_reclaim",
+        parameters={"strategy": "adaptive_range_reclaim", "short_window": 3, "long_window": 6, "research_only": True},
+        evidence={
+            "sample_validation": SAMPLE_VALIDATION_EVIDENCE,
+            "bitget_live_gray": {"status": "approved", "max_order_usdt": 5, "approved_at": 1},
+        },
+        updated_by="test",
+    )
+    config = _bitget_live_config(db_path)
+
+    result = run_launch_checklist(config, storage, target_mode="live")
+    profile_check = next(check for check in result["checks"] if check["name"] == "bitget_live_profile")
+
+    assert result["status"] == "blocked"
+    assert profile_check["status"] == "fail"
+    assert profile_check["details"]["strategy"] == "adaptive_range_reclaim"
+    assert "research_only_strategy_not_promotable" in profile_check["details"]["failures"]
 
 
 def test_launch_checklist_passes_bitget_live_after_safe_canary(tmp_path):

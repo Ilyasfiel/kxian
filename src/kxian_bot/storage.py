@@ -20,7 +20,7 @@ from kxian_bot.models import (
     WalkForwardRunSummary,
 )
 from kxian_bot.strategy_profile import active_profile_payload, profile_key
-from kxian_bot.strategies.factory import SUPPORTED_STRATEGIES
+from kxian_bot.strategies.factory import RESEARCH_ONLY_STRATEGIES, SUPPORTED_STRATEGIES
 
 FETCH_ALL_TABLES = {
     "exchange_orders",
@@ -423,6 +423,20 @@ class SQLiteStorage:
                 "exchange": exchange,
                 "symbol": symbol,
                 "interval": interval,
+            }
+        source_parameters = source.get("parameters", {}) if isinstance(source.get("parameters"), dict) else {}
+        source_strategy = str(source.get("strategy") or source_parameters.get("strategy") or "")
+        if source_strategy in RESEARCH_ONLY_STRATEGIES or source_parameters.get("research_only") is True:
+            return {
+                "status": "blocked",
+                "reason": "research_only_strategy_not_promotable",
+                "source_profile_key": source.get("profile_key"),
+                "source_mode": source_mode,
+                "target_mode": target_mode,
+                "exchange": exchange,
+                "symbol": symbol,
+                "interval": interval,
+                "strategy": source_strategy,
             }
         evidence = source.get("evidence", {})
         sample_validation = evidence.get("sample_validation") if isinstance(evidence, dict) else None

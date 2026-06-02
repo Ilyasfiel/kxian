@@ -57,6 +57,81 @@ def test_approve_bitget_live_gray_writes_live_profile(tmp_path):
     assert profile["evidence"]["bitget_live_gray"]["max_order_usdt"] == 5
 
 
+def test_approve_bitget_live_gray_blocks_research_only_profile(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    storage.upsert_strategy_profile(
+        mode="paper",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="adaptive_range_reclaim",
+        parameters={"strategy": "adaptive_range_reclaim", "short_window": 3, "long_window": 6, "research_only": True},
+        evidence={"sample_validation": SAMPLE_VALIDATION_EVIDENCE},
+        updated_by="test",
+    )
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        db_path=str(db_path),
+        interval="4h",
+        use_testnet=False,
+        max_live_order_usdt=5,
+        live_credentials_confirmed=True,
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+    )
+
+    result = approve_bitget_live_gray(
+        config,
+        storage,
+        updated_by="operator",
+        confirmation="LIVE:bitget:BTCUSDT:4h",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason"] == "research_only_strategy_not_approvable_for_bitget_live_gray"
+    assert result["strategy"] == "adaptive_range_reclaim"
+    assert storage.active_strategy_profile("live", "bitget", "BTCUSDT", "4h") is None
+
+
+def test_approve_bitget_live_gray_blocks_existing_live_research_only_profile(tmp_path):
+    db_path = tmp_path / "kxian.sqlite3"
+    storage = SQLiteStorage(db_path)
+    storage.upsert_strategy_profile(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        strategy="adaptive_range_reclaim",
+        parameters={"strategy": "adaptive_range_reclaim", "short_window": 3, "long_window": 6, "research_only": True},
+        evidence={"sample_validation": SAMPLE_VALIDATION_EVIDENCE},
+        updated_by="test",
+    )
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        db_path=str(db_path),
+        interval="4h",
+        use_testnet=False,
+        max_live_order_usdt=5,
+        live_credentials_confirmed=True,
+        bitget_api_key="key",
+        bitget_api_secret="secret",
+        bitget_api_passphrase="passphrase",
+    )
+
+    result = approve_bitget_live_gray(config, storage, confirmation="LIVE:bitget:BTCUSDT:4h")
+
+    profile = storage.active_strategy_profile("live", "bitget", "BTCUSDT", "4h")
+    assert result["status"] == "blocked"
+    assert result["reason"] == "research_only_strategy_not_approvable_for_bitget_live_gray"
+    assert result["source_mode"] == "live"
+    assert profile["strategy"] == "adaptive_range_reclaim"
+    assert "bitget_live_gray" not in profile["evidence"]
+
+
 def test_approve_bitget_live_gray_requires_exact_confirmation(tmp_path):
     db_path = tmp_path / "kxian.sqlite3"
     config = RuntimeConfig(

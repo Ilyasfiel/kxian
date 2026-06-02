@@ -6,6 +6,7 @@ from typing import Any
 
 from kxian_bot.config import RuntimeConfig, expected_live_confirmation
 from kxian_bot.storage import SQLiteStorage
+from kxian_bot.strategies.factory import RESEARCH_ONLY_STRATEGIES
 
 
 BITGET_LIVE_CANARY_MAX_ORDER_USDT = 5.0
@@ -67,6 +68,25 @@ def approve_bitget_live_gray(
             "symbol": live_config.symbol,
             "interval": live_config.interval,
             "next_steps": ["run paper validation and save an active bitget paper profile first"],
+        }
+
+    source_parameters = source.get("parameters", {}) if isinstance(source.get("parameters"), dict) else {}
+    source_strategy = str(source.get("strategy") or source_parameters.get("strategy") or "")
+    if source_strategy in RESEARCH_ONLY_STRATEGIES or source_parameters.get("research_only") is True:
+        return {
+            "status": "blocked",
+            "reason": "research_only_strategy_not_approvable_for_bitget_live_gray",
+            "source_profile_key": source.get("profile_key"),
+            "source_mode": source_mode,
+            "mode": "live",
+            "exchange": "bitget",
+            "symbol": live_config.symbol,
+            "interval": live_config.interval,
+            "strategy": source_strategy,
+            "next_steps": [
+                "use backtest or screen-samples for research-only strategies",
+                "save a passing tradable bitget profile before approving live gray",
+            ],
         }
 
     evidence = source.get("evidence", {}) if isinstance(source.get("evidence"), dict) else {}
