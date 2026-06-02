@@ -871,6 +871,17 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         </div>
       </section>
       <section class="inspect-section">
+        <h3 data-i18n="bitgetLiveGate">Bitget 只读灰度</h3>
+        <div class="kv"><span data-i18n="bitgetLiveStatus">只读状态</span><b id="bitgetLiveStatus" class="warn-text">-</b></div>
+        <div class="kv"><span data-i18n="bitgetLivePhase">灰度阶段</span><b id="bitgetLivePhase">-</b></div>
+        <div class="kv"><span data-i18n="bitgetLiveReason">阻断原因</span><b id="bitgetLiveReason">-</b></div>
+        <div class="kv"><span data-i18n="bitgetLiveProfile">Profile</span><b id="bitgetLiveProfile">live:bitget:BTCUSDT:4h</b></div>
+        <div class="acceptance-timeline" id="bitgetLiveTimeline" aria-live="polite"></div>
+        <div class="testnet-actions">
+          <button id="bitgetEvidenceButton" data-i18n="downloadBitgetEvidence">下载只读证据</button>
+        </div>
+      </section>
+      <section class="inspect-section">
         <h3 data-i18n="exchangeHealth">交易所连通性</h3>
         <div class="kv"><span data-i18n="publicMarketData">公开行情</span><b id="publicMarketHealth" class="warn-text">-</b></div>
         <div class="kv"><span data-i18n="tradingEndpoint">交易端点</span><b id="tradingEndpointHealth" class="warn-text">-</b></div>
@@ -1004,6 +1015,15 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         runTestnetDryRun: "测试网 Dry-run",
         runTestnetObserve: "观察 6 轮",
         downloadTestnetEvidence: "下载证据",
+        bitgetLiveGate: "Bitget 只读灰度",
+        bitgetLiveStatus: "只读状态",
+        bitgetLivePhase: "灰度阶段",
+        bitgetLiveReason: "阻断原因",
+        bitgetLiveProfile: "Profile",
+        downloadBitgetEvidence: "下载只读证据",
+        bitgetEvidenceStarted: "正在生成 Bitget 只读证据",
+        bitgetEvidencePassed: "Bitget 只读证据已下载",
+        bitgetEvidenceFailed: "Bitget 只读证据导出失败",
         observeCycles: "观察周期",
         observeReason: "失败原因",
         orderLifecycle: "订单闭环",
@@ -1438,6 +1458,15 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         runTestnetDryRun: "Run Testnet Dry-run",
         runTestnetObserve: "Observe 6 Cycles",
         downloadTestnetEvidence: "Download Evidence",
+        bitgetLiveGate: "Bitget Read-only Gray",
+        bitgetLiveStatus: "Read-only Status",
+        bitgetLivePhase: "Gray Phase",
+        bitgetLiveReason: "Blocked Reason",
+        bitgetLiveProfile: "Profile",
+        downloadBitgetEvidence: "Download Read-only Evidence",
+        bitgetEvidenceStarted: "Preparing Bitget read-only evidence",
+        bitgetEvidencePassed: "Bitget read-only evidence downloaded",
+        bitgetEvidenceFailed: "Bitget read-only evidence export failed",
         observeCycles: "Observation Cycles",
         observeReason: "Failure Reason",
         orderLifecycle: "Order Lifecycle",
@@ -1816,6 +1845,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       preflight: null,
       readiness: null,
       exchangeHealth: null,
+      bitgetLiveReadiness: null,
       dryRun: null,
       observation: null,
       launchTestnet: null,
@@ -2006,6 +2036,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       renderPreflight();
       renderReadiness();
       renderExchangeHealth();
+      renderBitgetLiveReadiness();
       renderLaunchChecklist();
       renderTestnetAcceptanceTimeline();
       updateAutomationControl();
@@ -2060,12 +2091,13 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
     }
 
     async function boot() {
-      const [overview, ops, preflight, readiness, exchangeHealth, launchTestnet, launchLive] = await Promise.all([
+      const [overview, ops, preflight, readiness, exchangeHealth, bitgetLiveReadiness, launchTestnet, launchLive] = await Promise.all([
         fetchJson("/api/overview"),
         fetchJson("/api/ops"),
         fetchJson("/api/preflight"),
         fetchJson("/api/readiness"),
         fetchJson("/api/exchange-health?mode=testnet&timeout=2"),
+        fetchJson("/api/bitget-live-readiness?timeout=2"),
         fetchJson("/api/launch-checklist?target=testnet"),
         fetchJson("/api/launch-checklist?target=live")
       ]);
@@ -2074,6 +2106,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       state.preflight = preflight;
       state.readiness = readiness;
       state.exchangeHealth = exchangeHealth;
+      state.bitgetLiveReadiness = bitgetLiveReadiness;
       state.launchTestnet = launchTestnet;
       state.launchLive = launchLive;
       state.selectedMarket = (ops.markets && ops.markets[0]) || null;
@@ -2082,6 +2115,7 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       renderPreflight();
       renderReadiness();
       renderExchangeHealth();
+      renderBitgetLiveReadiness();
       renderLaunchChecklist();
       renderTestnetAcceptanceTimeline();
       updateAutomationControl();
@@ -2286,6 +2320,61 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
       return openCount > 0 ? `${stateLabel} / open ${openCount}` : stateLabel;
     }
 
+    function renderBitgetLiveReadiness() {
+      const statusEl = $("bitgetLiveStatus");
+      const phaseEl = $("bitgetLivePhase");
+      const reasonEl = $("bitgetLiveReason");
+      const profileEl = $("bitgetLiveProfile");
+      const timelineEl = $("bitgetLiveTimeline");
+      if (!statusEl || !phaseEl || !reasonEl || !profileEl || !timelineEl) return;
+      const readiness = state.bitgetLiveReadiness;
+      if (!readiness) {
+        statusEl.className = "warn-text";
+        statusEl.textContent = t("loading");
+        phaseEl.textContent = "-";
+        reasonEl.textContent = "-";
+        profileEl.textContent = "live:bitget:BTCUSDT:4h";
+        timelineEl.innerHTML = "";
+        return;
+      }
+      const passed = readiness.status === "pass";
+      const phase = readiness.phase_summary || {};
+      statusEl.className = passed ? "good" : "bad";
+      statusEl.textContent = passed ? t("ready") : t("blocked");
+      phaseEl.textContent = messageLabel(phase.phase || readiness.reason || "-");
+      reasonEl.className = passed ? "good" : "bad";
+      reasonEl.textContent = messageLabel(phase.reason || readiness.reason || "-");
+      profileEl.textContent = "live:bitget:BTCUSDT:4h";
+      const checks = readiness.checks || [];
+      const steps = [
+        acceptanceStep("readiness", bitgetReadinessCheckStatus(checks, "readiness"), bitgetReadinessCheckMeta(checks, "readiness")),
+        acceptanceStep("exchange", bitgetReadinessCheckStatus(checks, "exchange_health"), bitgetReadinessCheckMeta(checks, "exchange_health")),
+        acceptanceStep("setup", bitgetReadinessCheckStatus(checks, "live_setup_check"), bitgetReadinessCheckMeta(checks, "live_setup_check")),
+        acceptanceStep("launch", bitgetReadinessCheckStatus(checks, "launch_checklist"), bitgetReadinessCheckMeta(checks, "launch_checklist"))
+      ];
+      timelineEl.innerHTML = steps.map((step) => `
+        <div class="timeline-step">
+          <span class="timeline-dot ${escapeHtml(step.className)}"></span>
+          <span>
+            <span class="timeline-title">${escapeHtml(messageLabel(step.title))}</span>
+            <span class="timeline-meta">${escapeHtml(messageLabel(step.meta || step.status || "pending"))}</span>
+          </span>
+          <span class="chip ${step.className === "pass" ? "green" : step.className === "fail" ? "red" : "yellow"}">${escapeHtml(step.label)}</span>
+        </div>
+      `).join("");
+    }
+
+    function bitgetReadinessCheckStatus(checks, name) {
+      const check = (checks || []).find((item) => item.name === name);
+      if (!check) return "pending";
+      return check.status === "pass" ? "pass" : "blocked";
+    }
+
+    function bitgetReadinessCheckMeta(checks, name) {
+      const check = (checks || []).find((item) => item.name === name);
+      return check?.message || check?.status || "pending";
+    }
+
     function renderExchangeHealth() {
       const publicEl = $("publicMarketHealth");
       const tradingEl = $("tradingEndpointHealth");
@@ -2325,15 +2414,18 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
     }
 
     async function refreshLaunchChecklist() {
-      const [exchangeHealth, launchTestnet, launchLive] = await Promise.all([
+      const [exchangeHealth, bitgetLiveReadiness, launchTestnet, launchLive] = await Promise.all([
         fetchJson("/api/exchange-health?mode=testnet&timeout=2"),
+        fetchJson("/api/bitget-live-readiness?timeout=2"),
         fetchJson("/api/launch-checklist?target=testnet"),
         fetchJson("/api/launch-checklist?target=live")
       ]);
       state.exchangeHealth = exchangeHealth;
+      state.bitgetLiveReadiness = bitgetLiveReadiness;
       state.launchTestnet = launchTestnet;
       state.launchLive = launchLive;
       renderExchangeHealth();
+      renderBitgetLiveReadiness();
       renderLaunchChecklist();
       renderTestnetAcceptanceTimeline();
     }
@@ -3033,6 +3125,24 @@ OPS_DASHBOARD_HTML = r"""<!doctype html>
         renderTestnetAcceptanceTimeline();
       }
       downloadJson("kxian-testnet-evidence.json", data);
+      return data;
+    }));
+    $("bitgetEvidenceButton").addEventListener("click", () => withButtonFeedback($("bitgetEvidenceButton"), {
+      loadingText: t("bitgetEvidenceStarted"),
+      successText: t("bitgetEvidencePassed"),
+      failureText: t("bitgetEvidenceFailed")
+    }, async () => {
+      const data = await fetchJson("/api/bitget-live-evidence");
+      state.bitgetLiveEvidence = data;
+      if (data.phase_summary) {
+        state.bitgetLiveReadiness = {
+          ...(state.bitgetLiveReadiness || {}),
+          phase_summary: data.phase_summary,
+          status: data.phase_summary.phase === "live_review_ready" ? "pass" : "blocked"
+        };
+        renderBitgetLiveReadiness();
+      }
+      downloadJson("kxian-bitget-live-evidence.json", data);
       return data;
     }));
     $("exportButton").addEventListener("click", () => withButtonFeedback($("exportButton"), {

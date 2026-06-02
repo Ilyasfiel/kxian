@@ -503,6 +503,69 @@ def test_dashboard_testnet_evidence_api_is_fixed_scope_and_redacted(monkeypatch,
     assert "secret-value" not in raw
 
 
+def test_dashboard_bitget_live_readiness_and_evidence_are_readonly(monkeypatch, tmp_path):
+    def fake_readiness(config, storage=None, require_testnet_autotrade=True):
+        assert config.mode == "live"
+        assert config.exchange == "bitget"
+        assert config.symbol == "BTCUSDT"
+        assert config.interval == "4h"
+        return {"status": "fail", "checks": [{"name": "strategy_gate", "status": "fail", "details": {"failed_checks": ["strategy_gate"]}}]}
+
+    def fake_exchange_health(config, timeout_seconds=5.0):
+        return {"status": "pass", "mode": config.mode, "exchange": config.exchange, "timeout_seconds": timeout_seconds, "checks": []}
+
+    def fake_live_setup(config, storage=None, timeout_seconds=5.0):
+        return {"status": "blocked", "mode": config.mode, "will_submit_orders": False, "timeout_seconds": timeout_seconds}
+
+    def fake_launch_checklist(config, storage, target_mode=None):
+        assert target_mode == "live"
+        return {
+            "status": "blocked",
+            "phase": "blocked_before_bitget_live_canary",
+            "target_mode": "live",
+            "checks": [{"name": "bitget_live_canary_order", "status": "fail", "details": {"open_order_count": 0}}],
+            "latest_order": {"exchange_order_id": "live-order-id"},
+        }
+
+    monkeypatch.setattr("kxian_bot.dashboard.run_readiness", fake_readiness)
+    monkeypatch.setattr("kxian_bot.dashboard.run_exchange_health_check", fake_exchange_health)
+    monkeypatch.setattr("kxian_bot.dashboard.run_live_setup_check", fake_live_setup)
+    monkeypatch.setattr("kxian_bot.dashboard.run_launch_checklist", fake_launch_checklist)
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    handler = _build_handler(
+        storage,
+        RuntimeConfig(
+            db_path=str(tmp_path / "kxian.sqlite3"),
+            mode="paper",
+            exchange="binance",
+            symbol="ETHUSDT",
+            interval="1m",
+            bitget_api_key="bitget-key-value",
+            bitget_api_secret="bitget-secret-value",
+            bitget_api_passphrase="bitget-passphrase-value",
+        ),
+    )
+
+    readiness = _call_json(handler, "/api/bitget-live-readiness?timeout=1")
+    evidence = _call_json(handler, "/api/bitget-live-evidence")
+    raw = json.dumps(evidence)
+
+    assert readiness["status"] == "blocked"
+    assert readiness["mode"] == "live"
+    assert readiness["exchange"] == "bitget"
+    assert readiness["will_submit_orders"] is False
+    assert readiness["include_account"] is False
+    assert readiness["sync_fills"] is False
+    assert evidence["scope"]["mode"] == "live"
+    assert evidence["scope"]["exchange"] == "bitget"
+    assert evidence["phase_summary"]["will_submit_orders"] is False
+    assert evidence["phase_summary"]["canary_allowed"] is False
+    assert "bitget-key-value" not in raw
+    assert "bitget-secret-value" not in raw
+    assert "bitget-passphrase-value" not in raw
+    assert "live-order-id" not in raw
+
+
 def test_dashboard_api_uses_latest_contiguous_candle_window(tmp_path):
     storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
     storage.upsert_candles(
@@ -563,9 +626,15 @@ def test_dashboard_template_exposes_preflight_startup_gate():
     assert "function renderLaunchChecklist" in OPS_DASHBOARD_HTML
     assert "function refreshLaunchChecklist" in OPS_DASHBOARD_HTML
     assert "/api/testnet-evidence" in OPS_DASHBOARD_HTML
+    assert "/api/bitget-live-readiness?timeout=2" in OPS_DASHBOARD_HTML
+    assert "/api/bitget-live-evidence" in OPS_DASHBOARD_HTML
     assert 'id="testnetAcceptanceTimeline" aria-live="polite"' in OPS_DASHBOARD_HTML
     assert 'id="testnetEvidenceButton"' in OPS_DASHBOARD_HTML
+    assert 'id="bitgetLiveStatus"' in OPS_DASHBOARD_HTML
+    assert 'id="bitgetLiveReason"' in OPS_DASHBOARD_HTML
+    assert 'id="bitgetEvidenceButton"' in OPS_DASHBOARD_HTML
     assert "function renderTestnetAcceptanceTimeline" in OPS_DASHBOARD_HTML
+    assert "function renderBitgetLiveReadiness" in OPS_DASHBOARD_HTML
 
 
 def test_dashboard_template_exposes_language_switch():
@@ -655,6 +724,7 @@ def test_dashboard_template_has_unified_button_feedback_and_testnet_result_state
     assert 'withButtonFeedback($("dryRunButton")' in OPS_DASHBOARD_HTML
     assert 'withButtonFeedback($("observeButton")' in OPS_DASHBOARD_HTML
     assert 'withButtonFeedback($("testnetEvidenceButton")' in OPS_DASHBOARD_HTML
+    assert 'withButtonFeedback($("bitgetEvidenceButton")' in OPS_DASHBOARD_HTML
     assert 'withButtonFeedback($("exportButton")' in OPS_DASHBOARD_HTML
     assert 'withButtonFeedback(button' in OPS_DASHBOARD_HTML
     assert 'row.addEventListener("click", () => withButtonFeedback(row' in OPS_DASHBOARD_HTML
@@ -669,6 +739,8 @@ def test_dashboard_template_has_unified_button_feedback_and_testnet_result_state
     assert 'renderObservationSummary(state.observation)' in OPS_DASHBOARD_HTML
     assert 'renderTestnetAcceptanceTimeline();' in OPS_DASHBOARD_HTML
     assert 'downloadJson("kxian-testnet-evidence.json", data)' in OPS_DASHBOARD_HTML
+    assert 'downloadJson("kxian-bitget-live-evidence.json", data)' in OPS_DASHBOARD_HTML
+    assert 'id="bitgetCanaryButton"' not in OPS_DASHBOARD_HTML
     assert "function checkStepMeta" in OPS_DASHBOARD_HTML
     assert "function checklistStepMeta" in OPS_DASHBOARD_HTML
     assert "observation.latest_reason || latestObservationReason(observation)" in OPS_DASHBOARD_HTML

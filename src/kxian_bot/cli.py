@@ -21,6 +21,14 @@ from kxian_bot.market_data import MarketDataError, fetch_bitget_trading_rule
 from kxian_bot.models import OrderRequest, TradingRule
 from kxian_bot.preflight import run_preflight
 from kxian_bot.readiness import run_readiness
+from kxian_bot.research_evidence import (
+    build_sample_manifest,
+    build_strategy_research_evidence,
+    sample_manifest_summary,
+    strategy_research_evidence_summary,
+    write_sample_manifest,
+    write_strategy_research_evidence,
+)
 from kxian_bot.runner import TradingRunner
 from kxian_bot.storage import SQLiteStorage
 from kxian_bot.strategy_parameters import strategy_parameters
@@ -332,6 +340,27 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_samples_parser.add_argument("--sleep-seconds", type=float, default=0.0)
     prepare_samples_parser.add_argument("--min-candles", type=int, default=1)
 
+    manifest_parser = subparsers.add_parser("freeze-sample-manifest")
+    manifest_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], required=True)
+    manifest_parser.add_argument("--symbol", type=str, required=True)
+    manifest_parser.add_argument("--interval", type=str, required=True)
+    manifest_parser.add_argument("--train-files", required=True)
+    manifest_parser.add_argument("--validation-files", default="")
+    manifest_parser.add_argument("--final-oos-files", default="")
+    manifest_parser.add_argument("--output-file", required=True)
+    manifest_parser.add_argument("--notes", default="")
+
+    strategy_evidence_parser = subparsers.add_parser("strategy-research-evidence")
+    strategy_evidence_parser.add_argument("--manifest", required=True)
+    strategy_evidence_parser.add_argument("--hypothesis-id", required=True)
+    strategy_evidence_parser.add_argument("--hypothesis", required=True)
+    strategy_evidence_parser.add_argument("--strategy", required=True)
+    strategy_evidence_parser.add_argument("--command", dest="research_command", required=True)
+    strategy_evidence_parser.add_argument("--result-file", required=True)
+    strategy_evidence_parser.add_argument("--max-combinations", type=positive_int, default=None)
+    strategy_evidence_parser.add_argument("--skip-combinations", type=non_negative_int, default=0)
+    strategy_evidence_parser.add_argument("--evidence-out", required=True)
+
     research_parser = subparsers.add_parser("research-strategy")
     research_parser.add_argument("--exchange", choices=["binance", "okx", "bitget"], default=None)
     research_parser.add_argument("--symbol", type=str, default=None)
@@ -496,6 +525,7 @@ def main() -> None:
         "backtest",
         "batch-backtest",
         "download-history",
+        "freeze-sample-manifest",
         "import-candles",
         "market-diagnostics",
         "prepare-samples",
@@ -504,6 +534,7 @@ def main() -> None:
         "select-sample-intervals",
         "select-samples",
         "select-strategy",
+        "strategy-research-evidence",
         "stress-backtest",
         "trading-rules",
         "trade-loop",
@@ -511,11 +542,13 @@ def main() -> None:
         "walk-forward-samples",
     }
     promote_commands = {"research-strategy", "select-strategy", "select-samples", "select-sample-intervals"}
+    offline_no_env_commands = {"freeze-sample-manifest", "strategy-research-evidence"}
     needs_strict_config = args.command in promote_commands and bool(getattr(args, "promote", False))
+    load_env = (not args.no_dotenv) and args.command not in offline_no_env_commands
     config = (
-        _load_cli_config(validate_execution=False, load_env=not args.no_dotenv)
+        _load_cli_config(validate_execution=False, load_env=load_env)
         if args.command in relaxed_config_commands and not needs_strict_config
-        else _load_cli_config(validate_execution=True, load_env=not args.no_dotenv)
+        else _load_cli_config(validate_execution=True, load_env=load_env)
     )
 
     try:
@@ -1054,6 +1087,38 @@ def main() -> None:
                     ensure_ascii=False,
                 )
             )
+            return
+
+        if args.command == "freeze-sample-manifest":
+            manifest = build_sample_manifest(
+                exchange=args.exchange,
+                symbol=args.symbol,
+                interval=args.interval,
+                train_files=parse_input_files(args.train_files),
+                validation_files=parse_input_files(args.validation_files) if args.validation_files else [],
+                final_oos_files=parse_input_files(args.final_oos_files) if args.final_oos_files else [],
+                notes=args.notes,
+            )
+            write_sample_manifest(args.output_file, manifest)
+            print(json.dumps(sample_manifest_summary(manifest, output_file=args.output_file), ensure_ascii=False))
+            return
+
+        if args.command == "strategy-research-evidence":
+            evidence = build_strategy_research_evidence(
+                manifest_path=args.manifest,
+                hypothesis_id=args.hypothesis_id,
+                hypothesis=args.hypothesis,
+                strategy=args.strategy,
+                command=args.research_command,
+                result_file=args.result_file,
+                max_combinations=args.max_combinations,
+                skip_combinations=args.skip_combinations,
+            )
+            write_strategy_research_evidence(args.evidence_out, evidence)
+            summary = strategy_research_evidence_summary(evidence, evidence_out=args.evidence_out)
+            print(json.dumps(summary, ensure_ascii=False))
+            if summary["status"] != "pass":
+                raise SystemExit(2)
             return
 
         if args.command == "research-strategy":
@@ -1864,6 +1929,26 @@ def parse_int_list(value: str) -> list[int]:
         raise argparse.ArgumentTypeError("Expected at least one integer")
     if any(item <= 0 for item in parsed):
         raise argparse.ArgumentTypeError("Window values must be positive")
+    return parsed
+
+
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Expected a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("Expected a positive integer")
+    return parsed
+
+
+def non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Expected a non-negative integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("Expected a non-negative integer")
     return parsed
 
 

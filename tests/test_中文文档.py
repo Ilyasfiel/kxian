@@ -70,3 +70,19 @@ def test_bitget_strategy_evidence_report_keeps_live_blocked():
     assert "open/submitted/partial/unknown" in report
     assert "不得把 `screen-samples` 的失败预筛结果包装成上线证据" in report
     assert "如果没有新的未触碰样本外窗口，不允许生成 live profile" in report
+
+
+def test_bitget_readonly_and_sample_governance_docs_exist():
+    checklist = (ROOT / "docs" / "Bitget只读验收清单.md").read_text(encoding="utf-8")
+    evidence = (ROOT / "docs" / "Bitget只读证据包规范.md").read_text(encoding="utf-8")
+    samples = (ROOT / "docs" / "样本冻结与研究证据规范.md").read_text(encoding="utf-8")
+
+    assert "kxian-bot bitget-live-readiness" in checklist
+    assert "will_submit_orders=false" in checklist
+    assert "不得执行 `approve-bitget-live-gray`" in checklist
+    assert "kxian.bitget_live.evidence.v1" in evidence
+    assert "ACCESS-PASSPHRASE" in evidence
+    assert "canary_allowed" in evidence
+    assert "freeze-sample-manifest" in samples
+    assert "strategy-research-evidence" in samples
+    assert "do_not_use_for_screening_until_candidate_locked" in samples

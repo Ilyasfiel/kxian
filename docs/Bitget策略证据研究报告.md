@@ -14,6 +14,8 @@
 
 2026-06-02 追加只读研究 harness：CLI 新增全局 `--no-dotenv`，研究筛选可显式跳过项目 `.env` 自动加载，并通过 `screen-samples --exchange/--symbol/--interval` 固定离线证据 scope。注意 `--no-dotenv` 不会清空当前 shell 已有的 `KXIAN_*` 环境变量；完全隔离研究仍需使用干净 shell。新增研究专用现货策略 `adaptive_range_reclaim` 与 `volatility_regime_pullback_reclaim`，但它们都被标记为 research-only，`run-once`、`trade-loop` 会返回 `research_only_strategy_runtime_blocked`，包括 active profile 覆盖后的运行路径；任何 `--promote`、profile 晋升、Bitget live gray 批准路径都拒绝 research-only profile。
 
+2026-06-02 追加样本治理：CLI 新增 `freeze-sample-manifest` 与 `strategy-research-evidence`，用于在研究前冻结 train / validation / final OOS 样本 SHA256，并把后续筛选结果绑定到 manifest。当前已触碰的旧 5 段样本只能作为研究集和失败归因集；如果没有新的未触碰 final OOS，不能生成 live profile，也不能把失败筛选结果包装成上线证据。
+
 ## 只读状态
 
 2026-06-02 的只读复核结果：
@@ -125,6 +127,34 @@ Bitget 现货灰度只允许现货语义。任何做空、杠杆、合约策略�
 
 如果没有新的未触碰样本外窗口，不允许生成 live profile。
 
+冻结命令示例：
+
+```powershell
+kxian-bot --no-dotenv freeze-sample-manifest `
+  --exchange bitget `
+  --symbol BTCUSDT `
+  --interval 4h `
+  --train-files artifacts/samples/train/*.csv `
+  --validation-files artifacts/samples/validation/*.csv `
+  --final-oos-files artifacts/samples/final-oos/*.csv `
+  --output-file artifacts/样本清单.json
+```
+
+研究证据命令示例：
+
+```powershell
+kxian-bot --no-dotenv strategy-research-evidence `
+  --manifest artifacts/样本清单.json `
+  --hypothesis-id H-BITGET-001 `
+  --hypothesis "BTCUSDT 4h 回踩回收在趋势过滤后降低噪声" `
+  --strategy volatility_regime_pullback_reclaim `
+  --command "kxian-bot --no-dotenv screen-samples ..." `
+  --result-file artifacts/screen-result.json `
+  --max-combinations 500 `
+  --skip-combinations 0 `
+  --evidence-out artifacts/研究证据-H-BITGET-001.json
+```
+
 ## 研究预算
 
 固定预算如下：
@@ -182,17 +212,19 @@ Bitget 现货灰度只允许现货语义。任何做空、杠杆、合约策略�
 
 下一次只有在新策略完整验证通过、profile 生成、`readiness` 通过、`launch-checklist --target live` 只剩 canary 人工确认时，才允许重新请求一次 5U canary 授权。
 
-## 后续增强建议
+## 已补齐与后续增强
 
-下一阶段建议优先做 P0 工程增强：
+本轮已补齐：
 
-- 新策略假设开发：先补一个只读研究专用策略族或策略组合，不触碰实盘执行；只有在 1h/2h/4h 多段样本全部过 `strategy_gate` 后，再进入 `select-samples`。
 - 研究命令安全边界：只读研究命令允许使用 `validate_execution=False` 加载配置，避免临时研究周期被 live confirmation 短语误卡；真实执行命令继续保留 live confirmation 硬门禁。
 - Bitget 2h 行情适配：由于 Bitget 现货历史 K 线不支持直接请求 `2h` granularity，系统使用 `1h` 公开 K 线本地聚合成 `2h`，并用测试断言不会把 `2h` 直接提交到 Bitget 公共行情接口。
 - Bitget live 脱敏证据包：导出配置摘要、endpoint、readiness、live setup、launch checklist、open orders、账户同步、成交同步、canary 生命周期和内容哈希，不包含 key、secret、passphrase、signature、headers 原文。
 - Bitget 只读验收一键命令：固定串联 readiness、exchange-health、live-setup-check、launch-checklist，并输出 `will_submit_orders=false`；默认不访问账户余额、不同步成交，只有显式增加 `--include-account` 或 `--sync-fills` 时才触达账户查询或写入本地成交同步摘要。
-- 独立审计事件表：记录命令名、scope、执行者、结果、失败原因、证据哈希、是否只读、是否可能下单。
+- Dashboard Bitget live-only 状态条和证据下载按钮：按钮有 loading、disabled、`aria-busy`、成功/失败 toast 和固定结果区反馈，不提供 canary 或下单入口。
 
-P1 可继续增强 Dashboard 的 Bitget live-only 步骤条和证据下载按钮。按钮必须有 loading、disabled、`aria-busy`、成功/失败 toast 和固定结果区反馈。
+下一阶段建议优先做 P0 工程增强：
+
+- 新策略假设开发：先补一个只读研究专用策略族或策略组合，不触碰实盘执行；只有在 1h/2h/4h 多段样本全部过 `strategy_gate` 后，再进入 `select-samples`。
+- 独立审计事件表：记录命令名、scope、执行者、结果、失败原因、证据哈希、是否只读、是否可能下单。
 
 P2 可增加 canary 一次性 approval、冷却期、运行前后快照对比，以及带哈希链的不可变审计导出。

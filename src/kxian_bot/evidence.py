@@ -45,6 +45,8 @@ BITGET_LIVE_EVIDENCE_TOP_LEVEL_KEYS = frozenset(
         "command",
         "scope",
         "credentials",
+        "profile",
+        "phase_summary",
         "readiness",
         "exchange_health",
         "live_setup_check",
@@ -91,6 +93,8 @@ SENSITIVE_TEXT_PATTERNS = (
     re.compile(r"(?i)(signature\s*[:=]\s*)[A-Fa-f0-9]{16,}"),
     re.compile(r"(?i)(api[_-]?key\s*[:=]\s*)[A-Za-z0-9._~+/=-]{8,}"),
     re.compile(r"(?i)(api[_-]?secret\s*[:=]\s*)[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)(access[-_]?passphrase\s*[:=]\s*)[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"(?i)(passphrase\s*[:=]\s*)[A-Za-z0-9._~+/=-]{8,}"),
 )
 
 
@@ -265,6 +269,12 @@ def build_bitget_live_evidence(
                     "bitget_api_passphrase": bool(credential_presence.get("bitget_api_passphrase")),
                 },
             },
+            "profile": _bitget_profile_summary(profile),
+            "phase_summary": _bitget_phase_summary(
+                readiness=readiness,
+                live_setup_check=live_setup_check,
+                launch_checklist=launch_checklist,
+            ),
             "readiness": _status_summary(readiness, include_checks=True),
             "exchange_health": _status_summary(exchange_health, include_checks=True),
             "live_setup_check": _status_summary(live_setup_check, include_checks=True),
@@ -496,6 +506,19 @@ def _bitget_live_evidence_contract_failures(evidence: dict[str, Any], *, require
         for key, value in present.items():
             if not isinstance(value, bool):
                 failures.append(f"credential_presence_must_be_boolean:{key}")
+    profile = evidence.get("profile")
+    if not isinstance(profile, dict):
+        failures.append("missing_profile")
+    elif profile.get("profile_key") != "live:bitget:BTCUSDT:4h":
+        failures.append("invalid_profile_key")
+    phase_summary = evidence.get("phase_summary")
+    if not isinstance(phase_summary, dict):
+        failures.append("missing_phase_summary")
+    else:
+        if phase_summary.get("will_submit_orders") is not False:
+            failures.append("phase_summary_will_submit_orders_must_be_false")
+        if phase_summary.get("canary_allowed") is not False:
+            failures.append("phase_summary_canary_allowed_must_be_false")
     safety = evidence.get("safety")
     if not isinstance(safety, dict):
         failures.append("missing_safety")
@@ -769,6 +792,96 @@ def _bitget_launch_summary(payload: dict[str, Any] | None) -> dict[str, Any] | N
         "interval": payload.get("interval"),
         "checks": checks,
     }
+
+
+def _bitget_profile_summary(profile: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(profile, dict):
+        return {
+            "status": "missing",
+            "profile_key": "live:bitget:BTCUSDT:4h",
+            "evidence_status": "missing",
+        }
+    evidence = profile.get("evidence") if isinstance(profile.get("evidence"), dict) else {}
+    gates = evidence.get("gates") if isinstance(evidence.get("gates"), dict) else {}
+    return {
+        "status": "active",
+        "profile_key": profile.get("profile_key") or "live:bitget:BTCUSDT:4h",
+        "updated_at": profile.get("updated_at"),
+        "updated_by": profile.get("updated_by"),
+        "strategy": profile.get("strategy"),
+        "parameters": profile.get("parameters", {}),
+        "evidence_status": "present" if evidence else "missing",
+        "gate_statuses": {
+            name: gate.get("status")
+            for name, gate in gates.items()
+            if isinstance(gate, dict) and gate.get("status") is not None
+        },
+    }
+
+
+def _bitget_phase_summary(
+    *,
+    readiness: dict[str, Any] | None,
+    live_setup_check: dict[str, Any] | None,
+    launch_checklist: dict[str, Any] | None,
+) -> dict[str, Any]:
+    readiness_failures = _readiness_failure_names(readiness)
+    launch_phase = launch_checklist.get("phase") if isinstance(launch_checklist, dict) else None
+    launch_status = launch_checklist.get("status") if isinstance(launch_checklist, dict) else None
+    live_setup_status = live_setup_check.get("status") if isinstance(live_setup_check, dict) else None
+    if _has_strategy_evidence_failure(readiness_failures):
+        phase = "strategy_evidence_blocked"
+        reason = "strategy_gate_or_validation_evidence_missing"
+    elif launch_phase == "blocked_before_bitget_live_canary":
+        phase = "blocked_before_bitget_live_canary"
+        reason = "read_only_gates_passed_but_canary_not_completed"
+    elif launch_status == "pass":
+        phase = "live_review_ready"
+        reason = "launch_checklist_passed"
+    elif live_setup_status not in {"pass", None}:
+        phase = "live_setup_blocked"
+        reason = "live_setup_check_blocked"
+    else:
+        phase = "readonly_gate_blocked"
+        reason = "bitget_readonly_gate_blocked"
+    return {
+        "phase": phase,
+        "reason": reason,
+        "readiness_failed_checks": readiness_failures,
+        "launch_status": launch_status,
+        "launch_phase": launch_phase,
+        "live_setup_status": live_setup_status,
+        "will_submit_orders": False,
+        "canary_allowed": False,
+    }
+
+
+def _readiness_failure_names(payload: dict[str, Any] | None) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    failures: list[str] = []
+    for check in payload.get("checks", []):
+        if not isinstance(check, dict) or check.get("status") == "pass":
+            continue
+        name = check.get("name")
+        if isinstance(name, str) and name:
+            failures.append(name)
+        details = check.get("details") if isinstance(check.get("details"), dict) else {}
+        for key in ("failed_checks", "failures"):
+            values = details.get(key)
+            if isinstance(values, list):
+                failures.extend(str(value) for value in values if value)
+    return sorted(set(failures))
+
+
+def _has_strategy_evidence_failure(failures: list[str]) -> bool:
+    strategy_fragments = (
+        "strategy_gate",
+        "sample_validation_gate",
+        "stress_gate",
+        "walk_forward_gate",
+    )
+    return any(any(fragment in failure for fragment in strategy_fragments) for failure in failures)
 
 
 def _current_git_commit() -> str:

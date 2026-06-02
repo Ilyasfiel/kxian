@@ -8,9 +8,10 @@ from urllib.parse import parse_qs, urlparse
 
 from kxian_bot.config import RuntimeConfig
 from kxian_bot.dashboard_template import OPS_DASHBOARD_HTML
-from kxian_bot.evidence import build_testnet_evidence
+from kxian_bot.evidence import build_bitget_live_evidence, build_testnet_evidence
 from kxian_bot.exchange_health import run_exchange_health_check
 from kxian_bot.launch_checklist import run_launch_checklist
+from kxian_bot.live_setup import run_live_setup_check
 from kxian_bot.market_diagnostics import diagnose_market
 from kxian_bot.market_data import MarketDataError, interval_to_milliseconds, latest_contiguous_candles
 from kxian_bot.preflight import run_preflight
@@ -75,6 +76,23 @@ def _build_handler(storage: SQLiteStorage, config: RuntimeConfig | None = None):
                         storage,
                         command="dashboard-testnet-evidence",
                         launch_checklist=checklist,
+                    )
+                )
+                return
+            if parsed.path == "/api/bitget-live-readiness":
+                params = parse_qs(parsed.query)
+                timeout = _bounded_float(_first(params, "timeout", "5"), default=5.0, minimum=0.5, maximum=30.0)
+                self._send_json(_bitget_live_readiness_payload(config, storage, timeout_seconds=timeout))
+                return
+            if parsed.path == "/api/bitget-live-evidence":
+                params = parse_qs(parsed.query)
+                timeout = _bounded_float(_first(params, "timeout", "5"), default=5.0, minimum=0.5, maximum=30.0)
+                self._send_json(
+                    _bitget_live_evidence_payload(
+                        config,
+                        storage,
+                        timeout_seconds=timeout,
+                        command="dashboard-bitget-live-evidence",
                     )
                 )
                 return
@@ -217,6 +235,103 @@ def _mode_config(config: RuntimeConfig, mode: str) -> RuntimeConfig:
     if mode == "live":
         return config.model_copy(update={"mode": "live", "market_data_source": "exchange", "use_testnet": False})
     return config
+
+
+def _bitget_live_config(config: RuntimeConfig) -> RuntimeConfig:
+    return config.model_copy(
+        update={
+            "mode": "live",
+            "exchange": "bitget",
+            "symbol": "BTCUSDT",
+            "interval": "4h",
+            "use_testnet": False,
+            "market_data_source": "exchange",
+        }
+    )
+
+
+def _bitget_live_readiness_payload(
+    config: RuntimeConfig,
+    storage: SQLiteStorage,
+    *,
+    timeout_seconds: float,
+) -> dict:
+    bitget_config = _bitget_live_config(config)
+    readiness = run_readiness(bitget_config, storage)
+    exchange_health = run_exchange_health_check(bitget_config, timeout_seconds=timeout_seconds)
+    live_setup = run_live_setup_check(bitget_config, storage, timeout_seconds=timeout_seconds)
+    launch_checklist = run_launch_checklist(bitget_config, storage, target_mode="live")
+    evidence = build_bitget_live_evidence(
+        bitget_config,
+        storage,
+        command="dashboard-bitget-live-readiness",
+        readiness=readiness,
+        exchange_health=exchange_health,
+        live_setup_check=live_setup,
+        launch_checklist=launch_checklist,
+    )
+    checks = [
+        _readonly_check("readiness", readiness),
+        _readonly_check("exchange_health", exchange_health),
+        _readonly_check("live_setup_check", live_setup),
+        _readonly_check("launch_checklist", launch_checklist),
+    ]
+    status = "pass" if all(check["status"] == "pass" for check in checks) else "blocked"
+    return {
+        "status": status,
+        "reason": None if status == "pass" else "bitget_live_readiness_blocked",
+        "mode": "live",
+        "exchange": "bitget",
+        "symbol": "BTCUSDT",
+        "interval": "4h",
+        "use_testnet": False,
+        "will_submit_orders": False,
+        "include_account": False,
+        "sync_fills": False,
+        "timeout_seconds": timeout_seconds,
+        "checks": checks,
+        "phase_summary": evidence.get("phase_summary"),
+        "readiness": evidence.get("readiness"),
+        "exchange_health": evidence.get("exchange_health"),
+        "live_setup_check": evidence.get("live_setup_check"),
+        "launch_checklist": evidence.get("launch_checklist"),
+        "next_steps": [
+            "do not run approve-bitget-live-gray, trade-loop, run-once, test-order, promote, or cancel-order from the dashboard",
+            "keep Bitget live blocked until strategy evidence and manual canary gates are complete",
+        ],
+    }
+
+
+def _bitget_live_evidence_payload(
+    config: RuntimeConfig,
+    storage: SQLiteStorage,
+    *,
+    timeout_seconds: float,
+    command: str,
+) -> dict:
+    bitget_config = _bitget_live_config(config)
+    readiness = run_readiness(bitget_config, storage)
+    exchange_health = run_exchange_health_check(bitget_config, timeout_seconds=timeout_seconds)
+    live_setup = run_live_setup_check(bitget_config, storage, timeout_seconds=timeout_seconds)
+    launch_checklist = run_launch_checklist(bitget_config, storage, target_mode="live")
+    return build_bitget_live_evidence(
+        bitget_config,
+        storage,
+        command=command,
+        readiness=readiness,
+        exchange_health=exchange_health,
+        live_setup_check=live_setup,
+        launch_checklist=launch_checklist,
+    )
+
+
+def _readonly_check(name: str, payload: dict) -> dict:
+    status = payload.get("status") if isinstance(payload, dict) else "blocked"
+    return {
+        "name": name,
+        "status": "pass" if status == "pass" else "blocked",
+        "message": payload.get("reason") or payload.get("phase") or status if isinstance(payload, dict) else "missing",
+    }
 
 
 def _overview_payload(storage: SQLiteStorage) -> dict:

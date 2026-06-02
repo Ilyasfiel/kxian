@@ -74,6 +74,8 @@ kxian-bot bitget-live-readiness --timeout-seconds 5 --evidence-out artifacts/bit
 
 该命令固定 `will_submit_orders=false`，不会执行 `approve-bitget-live-gray`、`trade-loop`、`run-once`、`test-order`、`promote-profile-to-live` 或 `cancel-order`。默认也不会访问账户余额或同步成交；只有显式增加 `--include-account` 或 `--sync-fills` 时，才会触达生产账户查询接口或写入本地成交同步结果。
 
+逐步判定表见 `docs/Bitget只读验收清单.md`，证据包字段规范见 `docs/Bitget只读证据包规范.md`。Dashboard 的 Bitget 区域只展示只读状态与证据下载，不提供 canary 或下单按钮。
+
 写入 Bitget live 灰度批准证据：
 
 只有 `docs/Bitget策略证据研究报告.md` 不再显示 `blocked_before_bitget_live_canary`，且 `readiness` 不再被策略证据门禁阻断时，才允许执行本节批准命令。
@@ -187,10 +189,14 @@ phase=ready_for_bounded_live_loop
 | 执行命令 | 只允许 `trade-loop --max-iterations 1 --sleep-seconds 0` |
 | 最终停止点 | `launch-checklist --target live` 返回 `status=pass`、`phase=ready_for_bounded_live_loop` |
 
+## 本轮已完成
+
+- `bitget-live-readiness --evidence-out` 已可生成不下单脱敏证据包；证据包已经包含 profile、phase summary、content hash、账户/成交摘要占位和只读安全标志。
+- Dashboard 已增加 Bitget live-only 状态与证据下载按钮；页面不会提供 canary 或下单入口。
+- 样本冻结与研究证据规范见 `docs/样本冻结与研究证据规范.md`，后续策略研究必须绑定 manifest。
+
 ## 后续优化
 
-- `bitget-live-readiness --evidence-out` 已可生成不下单脱敏证据包；后续增强 approval id、canary 生命周期、成交同步和账户同步的更细粒度摘要。
 - 增加专用 `bitget-live-canary` 编排命令，把只读检查、单轮执行和复核输出串起来，但执行前仍需显式确认。
-- Dashboard 增加 Bitget 灰度步骤条和证据下载。
 - 将“提现已禁用、IP 白名单已确认”写入结构化审批证据。
 - 增加浏览器级 Dashboard 测试、告警通知、不可变审计导出和 secret scan。

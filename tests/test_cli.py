@@ -1039,6 +1039,364 @@ def test_bitget_live_readiness_cli_summarizes_account_and_sync_outputs(monkeypat
     assert "sync-trade-id" not in saved_text
 
 
+def test_freeze_sample_manifest_cli_writes_role_hashes_and_final_oos_policy(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(db_path=str(tmp_path / "test.sqlite3"))
+    train_file = _write_sample_csv(tmp_path / "train.csv", 1_700_000_000_000)
+    validation_file = _write_sample_csv(tmp_path / "validation.csv", 1_700_086_400_000)
+    final_oos_file = _write_sample_csv(tmp_path / "final_oos.csv", 1_700_172_800_000)
+    manifest_path = tmp_path / "artifacts" / "样本清单.json"
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "--no-dotenv",
+            "freeze-sample-manifest",
+            "--exchange",
+            "bitget",
+            "--symbol",
+            "BTCUSDT",
+            "--interval",
+            "4h",
+            "--train-files",
+            str(train_file),
+            "--validation-files",
+            str(validation_file),
+            "--final-oos-files",
+            str(final_oos_file),
+            "--output-file",
+            str(manifest_path),
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+    roles = {sample["role"] for sample in saved["samples"]}
+    assert output["status"] == "pass"
+    assert output["manifest_id"] == saved["manifest_id"]
+    assert roles == {"train", "validation", "final_oos"}
+    assert all(len(sample["sha256"]) == 64 for sample in saved["samples"])
+    assert saved["policy"]["final_oos_touch_policy"] == "do_not_use_for_screening_until_candidate_locked"
+    assert saved["samples"][-1]["role"] == "final_oos"
+    assert saved["samples"][-1]["touch_count"] == 0
+
+
+def test_strategy_research_evidence_cli_binds_manifest_and_blocks_final_oos_screening(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(db_path=str(tmp_path / "test.sqlite3"))
+    train_file = _write_sample_csv(tmp_path / "train.csv", 1_700_000_000_000)
+    final_oos_file = _write_sample_csv(tmp_path / "final_oos.csv", 1_700_172_800_000)
+    manifest_path = tmp_path / "样本清单.json"
+    result_path = tmp_path / "screen-result.json"
+    evidence_path = tmp_path / "artifacts" / "研究证据.json"
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "--no-dotenv",
+            "freeze-sample-manifest",
+            "--exchange",
+            "bitget",
+            "--symbol",
+            "BTCUSDT",
+            "--interval",
+            "4h",
+            "--train-files",
+            str(train_file),
+            "--final-oos-files",
+            str(final_oos_file),
+            "--output-file",
+            str(manifest_path),
+        ],
+    )
+    cli.main()
+    capsys.readouterr()
+    result_path.write_text(
+        json.dumps(
+            {
+                "status": "fail",
+                "reason": "no_candidate_passed",
+                "sample_count": 1,
+                "candidates": [{"status": "fail", "reason": "low_trades"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8-sig",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "--no-dotenv",
+            "strategy-research-evidence",
+            "--manifest",
+            str(manifest_path),
+            "--hypothesis-id",
+            "H-BITGET-001",
+            "--hypothesis",
+            "Bitget BTCUSDT 4h pullback reclaim can reduce churn",
+            "--strategy",
+            "volatility_regime_pullback_reclaim",
+            "--command",
+            "kxian-bot screen-samples --input-files train.csv --summary-only",
+            "--result-file",
+            str(result_path),
+            "--max-combinations",
+            "20",
+            "--skip-combinations",
+            "5",
+            "--evidence-out",
+            str(evidence_path),
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert output["status"] == "pass"
+    assert evidence["schema"] == "kxian.strategy_research.evidence.v1"
+    assert evidence["sample_manifest"]["manifest_id"] == output["sample_manifest"]["manifest_id"]
+    assert evidence["research_budget"]["max_combinations"] == 20
+    assert evidence["research_budget"]["skip_combinations"] == 5
+    assert evidence["safety"]["uses_final_oos_for_screening"] is False
+    assert evidence["decision"]["candidate_screen_passed"] is False
+    assert evidence["decision"]["ready_for_profile_promotion"] is False
+
+
+def test_freeze_sample_manifest_does_not_load_dotenv_by_default(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(db_path=str(tmp_path / "test.sqlite3"))
+    train_file = _write_sample_csv(tmp_path / "train.csv", 1_700_000_000_000)
+    manifest_path = tmp_path / "样本清单.json"
+    calls = []
+
+    def fake_load_config(validate_execution=True, load_env=True):
+        calls.append({"validate_execution": validate_execution, "load_env": load_env})
+        return config
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "freeze-sample-manifest",
+            "--exchange",
+            "bitget",
+            "--symbol",
+            "BTCUSDT",
+            "--interval",
+            "4h",
+            "--train-files",
+            str(train_file),
+            "--output-file",
+            str(manifest_path),
+        ],
+    )
+
+    cli.main()
+
+    assert calls == [{"validate_execution": False, "load_env": False}]
+    assert json.loads(capsys.readouterr().out)["status"] == "pass"
+
+
+def test_strategy_research_evidence_does_not_load_dotenv_by_default(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(db_path=str(tmp_path / "test.sqlite3"))
+    train_file = _write_sample_csv(tmp_path / "train.csv", 1_700_000_000_000)
+    manifest_path = tmp_path / "样本清单.json"
+    result_path = tmp_path / "screen-result.json"
+    evidence_path = tmp_path / "artifacts" / "研究证据.json"
+    calls = []
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True, load_env=True: config)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "freeze-sample-manifest",
+            "--exchange",
+            "bitget",
+            "--symbol",
+            "BTCUSDT",
+            "--interval",
+            "4h",
+            "--train-files",
+            str(train_file),
+            "--output-file",
+            str(manifest_path),
+        ],
+    )
+    cli.main()
+    capsys.readouterr()
+    result_path.write_text(json.dumps({"status": "fail", "reason": "no_candidate"}, ensure_ascii=False), encoding="utf-8")
+
+    def fake_load_config(validate_execution=True, load_env=True):
+        calls.append({"validate_execution": validate_execution, "load_env": load_env})
+        return config
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "strategy-research-evidence",
+            "--manifest",
+            str(manifest_path),
+            "--hypothesis-id",
+            "H-BITGET-002",
+            "--hypothesis",
+            "no env load",
+            "--strategy",
+            "volatility_regime_pullback_reclaim",
+            "--command",
+            "kxian-bot --no-dotenv screen-samples --summary-only",
+            "--result-file",
+            str(result_path),
+            "--evidence-out",
+            str(evidence_path),
+        ],
+    )
+
+    cli.main()
+
+    assert calls == [{"validate_execution": False, "load_env": False}]
+    assert json.loads(capsys.readouterr().out)["status"] == "pass"
+
+
+def test_strategy_research_evidence_cli_blocks_when_final_oos_is_used(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(db_path=str(tmp_path / "test.sqlite3"))
+    (tmp_path / "samples").mkdir()
+    train_file = _write_sample_csv(tmp_path / "samples" / "train.csv", 1_700_000_000_000)
+    final_oos_dir = tmp_path / "samples" / "final-oos"
+    final_oos_dir.mkdir(parents=True)
+    final_oos_file = _write_sample_csv(final_oos_dir / "final.csv", 1_700_172_800_000)
+    manifest_path = tmp_path / "样本清单.json"
+    result_path = tmp_path / "screen-result.json"
+    evidence_path = tmp_path / "artifacts" / "研究证据.json"
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True, load_env=True: config)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "freeze-sample-manifest",
+            "--exchange",
+            "bitget",
+            "--symbol",
+            "BTCUSDT",
+            "--interval",
+            "4h",
+            "--train-files",
+            str(train_file),
+            "--final-oos-files",
+            str(final_oos_file),
+            "--output-file",
+            str(manifest_path),
+        ],
+    )
+    cli.main()
+    capsys.readouterr()
+    result_path.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "samples": [{"role": "final_oos", "input_file": str(final_oos_file), "status": "pass"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "strategy-research-evidence",
+            "--manifest",
+            str(manifest_path),
+            "--hypothesis-id",
+            "H-BITGET-OOS",
+            "--hypothesis",
+            "final oos must block",
+            "--strategy",
+            "volatility_regime_pullback_reclaim",
+            "--command",
+            f"kxian-bot --no-dotenv screen-samples --input-files {final_oos_dir}\\*.csv",
+            "--result-file",
+            str(result_path),
+            "--evidence-out",
+            str(evidence_path),
+        ],
+    )
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected final OOS screening to be blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert output["status"] == "blocked"
+    assert output["reason"] == "final_oos_used_before_candidate_lock"
+    assert evidence["safety"]["uses_final_oos_for_screening"] is True
+    assert evidence["decision"]["ready_for_profile_promotion"] is False
+
+
+def test_strategy_research_evidence_rejects_invalid_budget_args():
+    parser = cli.build_parser()
+
+    for argv in (
+        [
+            "strategy-research-evidence",
+            "--manifest",
+            "manifest.json",
+            "--hypothesis-id",
+            "H",
+            "--hypothesis",
+            "x",
+            "--strategy",
+            "volatility_regime_pullback_reclaim",
+            "--command",
+            "cmd",
+            "--result-file",
+            "result.json",
+            "--evidence-out",
+            "evidence.json",
+            "--max-combinations",
+            "0",
+        ],
+        [
+            "strategy-research-evidence",
+            "--manifest",
+            "manifest.json",
+            "--hypothesis-id",
+            "H",
+            "--hypothesis",
+            "x",
+            "--strategy",
+            "volatility_regime_pullback_reclaim",
+            "--command",
+            "cmd",
+            "--result-file",
+            "result.json",
+            "--evidence-out",
+            "evidence.json",
+            "--skip-combinations",
+            "-1",
+        ],
+    ):
+        try:
+            parser.parse_args(argv)
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError(f"Expected parse failure for {argv}")
+
+
 def test_run_once_cli_uses_relaxed_config_for_structured_launch_gate(monkeypatch, capsys, tmp_path):
     config = RuntimeConfig(mode="testnet", db_path=str(tmp_path / "test.sqlite3"), interval="4h")
     received = {}
@@ -4325,6 +4683,21 @@ def test_cli_expands_input_file_directories_and_globs(tmp_path):
     assert cli.parse_input_files(str(sample_dir)) == [str(second), str(first)]
     assert cli.parse_input_files(str(sample_dir / "*.csv")) == [str(second), str(first)]
     assert cli.parse_input_files(f"{first}, explicit.csv") == [str(first), "explicit.csv"]
+
+
+def _write_sample_csv(path, start_open_time):
+    path.write_text(
+        "\n".join(
+            [
+                "open_time,open,high,low,close,volume,close_time",
+                f"{start_open_time},100,110,90,105,12,{start_open_time + 14_399_999}",
+                f"{start_open_time + 14_400_000},105,111,101,108,10,{start_open_time + 28_799_999}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _record_testnet_observation(storage, execute_loop: bool, cycles: int = 6):

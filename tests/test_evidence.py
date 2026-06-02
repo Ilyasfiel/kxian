@@ -65,6 +65,20 @@ def test_redact_for_evidence_redacts_headers_and_signatures_inside_plain_text():
     assert raw.count("<redacted>") == 3
 
 
+def test_redact_for_evidence_redacts_bitget_passphrase_inside_plain_text():
+    payload = {
+        "message": "ACCESS-PASSPHRASE: bitgetpassphrasevalue",
+        "reason": "passphrase=anotherpassphrasevalue",
+    }
+
+    redacted = redact_for_evidence(payload)
+    raw = json.dumps(redacted)
+
+    assert "bitgetpassphrasevalue" not in raw
+    assert "anotherpassphrasevalue" not in raw
+    assert raw.count("<redacted>") == 2
+
+
 def test_write_evidence_creates_redacted_json(tmp_path):
     output_path = tmp_path / "artifacts" / "evidence.json"
 
@@ -180,6 +194,10 @@ def test_build_bitget_live_evidence_uses_live_scope_and_redacts(tmp_path):
     assert evidence["acceptance"]["canary_ready"] is False
     assert evidence["redaction"]["credential_presence"] == "boolean_only"
     assert evidence["redaction"]["order_ids"] == "status_summary_only"
+    assert evidence["profile"]["profile_key"] == "live:bitget:BTCUSDT:4h"
+    assert evidence["phase_summary"]["phase"] == "strategy_evidence_blocked"
+    assert evidence["phase_summary"]["will_submit_orders"] is False
+    assert evidence["phase_summary"]["canary_allowed"] is False
     assert "bitget-key-value" not in raw
     assert "bitget-secret-value" not in raw
     assert "bitget-passphrase-value" not in raw
@@ -189,6 +207,52 @@ def test_build_bitget_live_evidence_uses_live_scope_and_redacts(tmp_path):
     assert evidence["audit"]["schema_validation"]["validator"] == "bitget_live_evidence_contract_failures"
     assert re.fullmatch(r"[0-9a-f]{64}", evidence["audit"]["content_sha256"])
     assert bitget_live_evidence_contract_failures(evidence) == []
+
+
+def test_bitget_live_evidence_contract_rejects_missing_profile_or_canary_allowed(tmp_path):
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        use_testnet=False,
+        allow_live=True,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=5,
+        db_path=str(tmp_path / "kxian.sqlite3"),
+        bitget_api_key="bitget-key-value",
+        bitget_api_secret="bitget-secret-value",
+        bitget_api_passphrase="bitget-passphrase-value",
+    )
+    evidence = build_bitget_live_evidence(config, storage, command="bitget-live-readiness")
+
+    missing_profile = dict(evidence)
+    missing_profile.pop("profile")
+    assert "missing_top_level_keys:profile" in bitget_live_evidence_contract_failures(missing_profile)
+
+    wrong_profile = json.loads(json.dumps(evidence))
+    wrong_profile["profile"]["profile_key"] = "live:binance:BTCUSDT:4h"
+    assert "invalid_profile_key" in bitget_live_evidence_contract_failures(wrong_profile)
+
+    unsafe_phase = json.loads(json.dumps(evidence))
+    unsafe_phase["phase_summary"]["canary_allowed"] = True
+    assert "phase_summary_canary_allowed_must_be_false" in bitget_live_evidence_contract_failures(unsafe_phase)
+
+    missing_phase = dict(evidence)
+    missing_phase.pop("phase_summary")
+    assert "missing_top_level_keys:phase_summary" in bitget_live_evidence_contract_failures(missing_phase)
+
+    unsafe_phase_will_submit = json.loads(json.dumps(evidence))
+    unsafe_phase_will_submit["phase_summary"]["will_submit_orders"] = True
+    assert "phase_summary_will_submit_orders_must_be_false" in bitget_live_evidence_contract_failures(unsafe_phase_will_submit)
+
+    unsafe_safety = json.loads(json.dumps(evidence))
+    unsafe_safety["safety"]["will_submit_orders"] = True
+    assert "will_submit_orders_must_be_false" in bitget_live_evidence_contract_failures(unsafe_safety)
 
 
 def test_build_testnet_evidence_redacts_config_secret_values_in_messages(tmp_path):

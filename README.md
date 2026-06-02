@@ -392,13 +392,31 @@ Binance/OKX 这类走测试网闭环晋升的路径，只有当 `live-setup-chec
 
 Bitget live-only 灰度的时序不同：策略证据未过时必须停在只读研究；证据、profile、灰度批准和 `live-setup-check` 全部满足后，`launch-checklist --target live` 可能仍因缺少本轮 canary 证据而保持 `blocked_before_bitget_live_canary`。这只表示可以进入一次人工批准的 bounded canary 前置点，不表示可以多轮运行；单轮 canary 后必须再次跑 `launch-checklist --target live`，最终到 `ready_for_bounded_live_loop` 才算完成灰度复核。
 
-实盘自动化仍然执行同一套 preflight 门禁，会刷新未完成订单、同步账户和成交、拒绝未知成本价持仓，并把订单、成交、循环事件和风险状态记录到 SQLite。`promote-profile-to-live` 和 `launch-checklist --target live` 都要求同一交易所、交易对、周期已经通过非下单测试网观察和 bounded 测试网下单观察。
+实盘自动化仍然执行同一套 preflight 门禁，会刷新未完成订单、同步账户和成交、拒绝未知成本价持仓，并把订单、成交、循环事件和风险状态记录到 SQLite。通用 Binance/OKX 路径中，`promote-profile-to-live` 和 `launch-checklist --target live` 都要求同一交易所、交易对、周期已经通过非下单测试网观察和 bounded 测试网下单观察；Bitget 以本节 live-only 灰度说明和 `docs/Bitget实盘灰度手册.md` 为准。
 
-单轮 canary 后必须复核账户、成交、挂单和 checklist；任何异常都按 `docs/实盘灰度操作手册.md` 回退，不允许继续扩大运行。
+单轮 canary 后必须复核账户、成交、挂单和 checklist；Bitget 异常优先按 `docs/Bitget实盘灰度手册.md` 回退，通用实盘异常按 `docs/实盘灰度操作手册.md` 回退，不允许继续扩大运行。
 
 live 模式下禁用 `test-order`，避免绕过 checklist、策略证据和单笔上限直接提交真实订单。Bitget 路径额外要求 `KXIAN_EXCHANGE=bitget`、`KXIAN_USE_TESTNET=false`、`KXIAN_MAX_LIVE_ORDER_USDT=5`、`KXIAN_LIVE_CONFIRMATION=LIVE:bitget:BTCUSDT:4h`，并先执行 `trading-rules --refresh-from-exchange` 和 `approve-bitget-live-gray`。Bitget 灰度期间不使用 `run-once`，只允许一次 bounded `trade-loop --max-iterations 1 --sleep-seconds 0`。
 
 如果 `docs/Bitget策略证据研究报告.md` 仍显示 `blocked_before_bitget_live_canary`，或任一策略证据门禁未通过，必须停在只读研究阶段，不得执行批准、profile 写入、profile 晋升或 canary 命令。
+
+Bitget 只读验收可以在不触发账户余额、成交同步或订单动作的情况下导出：
+
+```powershell
+kxian-bot bitget-live-readiness --timeout-seconds 5 --evidence-out artifacts/bitget-live-readiness.json
+```
+
+证据包使用 `schema=kxian.bitget_live.evidence.v1`，包含 `profile`、`phase_summary` 和内容哈希，并固定 `will_submit_orders=false`、`canary_allowed=false`。详见 `docs/Bitget只读验收清单.md` 和 `docs/Bitget只读证据包规范.md`。
+逐步判定以 `docs/Bitget只读验收清单.md` 为准。
+
+策略研究前先冻结样本角色，再把筛选结果绑定成研究证据：
+
+```powershell
+kxian-bot --no-dotenv freeze-sample-manifest --exchange bitget --symbol BTCUSDT --interval 4h --train-files artifacts/samples/train/*.csv --validation-files artifacts/samples/validation/*.csv --final-oos-files artifacts/samples/final-oos/*.csv --output-file artifacts/样本清单.json
+kxian-bot --no-dotenv strategy-research-evidence --manifest artifacts/样本清单.json --hypothesis-id H-BITGET-001 --hypothesis "BTCUSDT 4h pullback reclaim" --strategy volatility_regime_pullback_reclaim --command "kxian-bot --no-dotenv screen-samples ..." --result-file artifacts/screen-result.json --max-combinations 500 --skip-combinations 0 --evidence-out artifacts/研究证据-H-BITGET-001.json
+```
+
+`final_oos` 样本在候选锁定前不得进入 `screen-samples`。详见 `docs/样本冻结与研究证据规范.md`。
 
 ## Testnet manual orders
 
