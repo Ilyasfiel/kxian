@@ -440,6 +440,14 @@ class FakeRunner:
             "skip_combinations": skip_combinations,
             "screen_min_trades": screen_min_trades,
             "screen_only": True,
+            "decision": "prefilter_passed",
+            "top_failure_reasons": [],
+            "failed_gate_counts": [],
+            "best_failed_candidate": None,
+            "diagnostics": [{"code": "prefilter_candidate_found"}],
+            "recommended_actions": [
+                "rerun the selected candidate with select-samples for stress and walk-forward validation before promotion"
+            ],
             "runtime_interval": normalized_intervals[0],
             "selected": {
                 "status": "prefilter_pass",
@@ -2513,6 +2521,11 @@ def test_screen_samples_cli_summary_only(monkeypatch, capsys, tmp_path):
     assert "input_files" not in output
     assert "short_windows" not in output
     assert output["selected"]["runtime_interval"] is None
+    assert output["decision"] == "prefilter_passed"
+    assert output["diagnostics"] == [{"code": "prefilter_candidate_found"}]
+    assert output["recommended_actions"] == [
+        "rerun the selected candidate with select-samples for stress and walk-forward validation before promotion"
+    ]
     assert output["candidates"][0]["runtime_interval"] is None
     assert output["candidates"][0]["failed_sample_examples"][0]["backtest"]["return_pct"] == -1.0
     assert "samples" not in output["candidates"][0]
@@ -2540,6 +2553,15 @@ def test_screen_samples_cli_exits_when_no_prefilter_candidate_passes(monkeypatch
             return {
                 "status": "fail",
                 "reason": "no_candidate_passed_prefilter",
+                "decision": "blocked",
+                "top_failure_reasons": [{"reason": "strategy_gate_return_too_low", "count": 2}],
+                "failed_gate_counts": [{"reason": "strategy_gate_return_too_low", "count": 2}],
+                "best_failed_candidate": {
+                    "strategy": "moving_average_cross",
+                    "parameters": {"short_window": 3, "long_window": 10},
+                },
+                "diagnostics": [{"code": "strategy_gate_return_too_low", "severity": "blocker"}],
+                "recommended_actions": ["do not promote this result"],
                 "candidates": [],
             }
 
@@ -2571,6 +2593,11 @@ def test_screen_samples_cli_exits_when_no_prefilter_candidate_passes(monkeypatch
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "fail"
     assert output["reason"] == "no_candidate_passed_prefilter"
+    assert output["decision"] == "blocked"
+    assert output["top_failure_reasons"] == [{"reason": "strategy_gate_return_too_low", "count": 2}]
+    assert output["best_failed_candidate"]["strategy"] == "moving_average_cross"
+    assert output["diagnostics"][0]["code"] == "strategy_gate_return_too_low"
+    assert output["recommended_actions"] == ["do not promote this result"]
 
 
 def test_screen_samples_summary_includes_load_error(monkeypatch, capsys, tmp_path):

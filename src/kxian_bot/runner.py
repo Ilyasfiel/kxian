@@ -1083,6 +1083,7 @@ class TradingRunner:
                 "selected": None,
                 "intervals": [],
                 "candidates": [],
+                **_screen_decision_fields("fail", "no_resample_intervals", [], [], len(input_files), 0),
             }
         if not input_files:
             return {
@@ -1095,6 +1096,7 @@ class TradingRunner:
                 "selected": None,
                 "intervals": [],
                 "candidates": [],
+                **_screen_decision_fields("fail", "no_input_files", [], [], len(input_files), 0),
             }
 
         try:
@@ -1118,6 +1120,7 @@ class TradingRunner:
                 "intervals": [],
                 "candidates": [],
                 "error": str(exc),
+                **_screen_decision_fields("fail", "input_file_load_failed", [], [], len(input_files), 0),
             }
         candidates: list[dict] = []
         interval_summaries: list[dict] = []
@@ -1283,6 +1286,14 @@ class TradingRunner:
 
         ranked = sorted(candidates, key=_screen_candidate_rank_key, reverse=True)
         selected = next((candidate for candidate in ranked if candidate.get("status") == "prefilter_pass"), None)
+        decision_fields = _screen_decision_fields(
+            "pass" if selected else "fail",
+            "prefilter_candidate_found" if selected else "no_candidate_passed_prefilter",
+            ranked,
+            interval_summaries,
+            len(input_files),
+            skipped,
+        )
         return {
             **base,
             "status": "pass" if selected else "fail",
@@ -1297,6 +1308,7 @@ class TradingRunner:
             "selected": selected,
             "intervals": sorted(interval_summaries, key=_screen_interval_rank_key, reverse=True),
             "candidates": ranked[:top],
+            **decision_fields,
             "next_steps": [
                 "rerun the selected candidate with select-samples for stress and walk-forward validation before promotion"
             ]
@@ -3009,6 +3021,122 @@ def _research_failure_reasons(selection: dict) -> list[str]:
         for candidate in interval.get("candidates") or []:
             reasons.extend(_candidate_failure_reasons(candidate))
     return reasons
+
+
+def _screen_decision_fields(
+    status: object,
+    reason: object,
+    candidates: list[dict],
+    intervals: list[dict],
+    input_file_count: int,
+    skipped_combinations: int,
+) -> dict:
+    decision = "prefilter_passed" if status == "pass" else "blocked"
+    best_candidate = _screen_interval_best_candidate(candidates[0]) if candidates else None
+    top_failure_reasons = _top_counts(_screen_failure_reasons(reason, candidates, intervals))
+    return {
+        "decision": decision,
+        "top_failure_reasons": top_failure_reasons,
+        "failed_gate_counts": _top_counts(_screen_failed_gate_reasons(candidates)),
+        "best_failed_candidate": _screen_best_failed_candidate(candidates),
+        "diagnostics": _screen_diagnostics(decision, top_failure_reasons, best_candidate, input_file_count),
+        "recommended_actions": _screen_recommended_actions(
+            decision,
+            top_failure_reasons,
+            best_candidate,
+            input_file_count,
+            skipped_combinations,
+        ),
+    }
+
+
+def _screen_failure_reasons(reason: object, candidates: list[dict], intervals: list[dict]) -> list[str]:
+    reasons: list[str] = []
+    if not candidates and reason and reason != "prefilter_candidate_found":
+        reasons.append(str(reason))
+    for interval in intervals:
+        if not candidates and interval.get("status") != "pass" and interval.get("reason"):
+            reasons.append(str(interval["reason"]))
+    for candidate in candidates:
+        if candidate.get("reason") not in {"sample_prefilter_failed", "prefilter_passed"}:
+            reasons.extend(_candidate_failure_reasons(candidate))
+            continue
+        for sample in candidate.get("samples") or []:
+            gate_reasons = _failed_gate_reasons(sample.get("gates") or {})
+            if gate_reasons:
+                reasons.extend(gate_reasons)
+            elif sample.get("status") not in {"pass", "prefilter_pass"} and sample.get("reason"):
+                reasons.append(str(sample["reason"]))
+    return reasons
+
+
+def _screen_failed_gate_reasons(candidates: list[dict]) -> list[str]:
+    reasons: list[str] = []
+    for candidate in candidates:
+        reasons.extend(_failed_gate_reasons(candidate.get("gates") or {}))
+        for sample in candidate.get("samples") or []:
+            reasons.extend(_failed_gate_reasons(sample.get("gates") or {}))
+    return reasons
+
+
+def _screen_best_failed_candidate(candidates: list[dict]) -> dict | None:
+    for candidate in candidates:
+        if candidate.get("status") != "prefilter_pass":
+            return _screen_interval_best_candidate(candidate)
+    return None
+
+
+def _screen_diagnostics(
+    decision: str,
+    top_failure_reasons: list[dict],
+    best_candidate: dict | None,
+    input_file_count: int,
+) -> list[dict]:
+    if decision == "prefilter_passed":
+        runtime_interval = best_candidate.get("runtime_interval") if best_candidate else None
+        return [
+            {
+                "code": "prefilter_candidate_found",
+                "severity": "info",
+                "message": "A candidate passed the screen prefilter; it still needs select-samples stress and walk-forward validation.",
+                "runtime_interval": runtime_interval,
+            }
+        ]
+    if not top_failure_reasons:
+        return [
+            {
+                "code": "no_passing_candidate",
+                "severity": "blocker",
+                "message": "No screen candidate passed the prefilter.",
+                "input_file_count": input_file_count,
+            }
+        ]
+    return [
+        _research_reason_diagnostic(str(item.get("reason") or ""), int(item.get("count") or 0), best_candidate, {})
+        for item in top_failure_reasons
+    ]
+
+
+def _screen_recommended_actions(
+    decision: str,
+    top_failure_reasons: list[dict],
+    best_candidate: dict | None,
+    input_file_count: int,
+    skipped_combinations: int,
+) -> list[str]:
+    if decision == "prefilter_passed":
+        return [
+            "rerun the selected candidate with select-samples for stress and walk-forward validation before promotion",
+            "do not use screen-samples alone as live readiness evidence",
+        ]
+
+    actions = _research_recommended_actions("blocked", top_failure_reasons, best_candidate, {})
+    if input_file_count <= 1:
+        actions.append("prepare multiple chronological samples before treating any candidate as robust")
+    if skipped_combinations:
+        actions.append("review skipped combinations and keep short_window smaller than long_window")
+    actions.append("use screen-samples only as a research prefilter; never promote a failed prefilter result")
+    return _dedupe_strings(actions)
 
 
 def _candidate_failure_reasons(candidate: dict) -> list[str]:

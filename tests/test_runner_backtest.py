@@ -1391,6 +1391,14 @@ def test_runner_screen_samples_stops_candidate_after_first_failed_sample(tmp_pat
     assert failed["input_file"] == str(second_path)
     assert failed["backtest"]["trade_count"] < 999
     assert "strategy_gate_insufficient_trades" in failed["failed_gates"]
+    assert result["decision"] == "blocked"
+    assert {"reason": "strategy_gate_insufficient_trades", "count": 1} in result["top_failure_reasons"]
+    assert {"reason": "strategy_gate_insufficient_trades", "count": 1} in result["failed_gate_counts"]
+    assert result["best_failed_candidate"]["strategy"] == "moving_average_cross"
+    assert result["best_failed_candidate"]["failed_sample_examples"][0]["input_file"] == str(second_path)
+    assert result["diagnostics"][0]["code"] == "strategy_gate_insufficient_trades"
+    assert any("do not promote" in action for action in result["recommended_actions"])
+    assert any("screen-samples only as a research prefilter" in action for action in result["recommended_actions"])
 
 
 def test_runner_screen_samples_can_relax_trade_count_prefilter_only(tmp_path, monkeypatch):
