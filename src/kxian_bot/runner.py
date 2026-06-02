@@ -260,7 +260,7 @@ class TradingRunner:
         return self.config.max_consecutive_loop_errors > 0 and consecutive_failures >= self.config.max_consecutive_loop_errors
 
     def _research_only_runtime_gate(self) -> dict | None:
-        if self.config.strategy not in RESEARCH_ONLY_STRATEGIES:
+        if self.config.strategy not in RESEARCH_ONLY_STRATEGIES and not self.config.research_only:
             return None
         return {
             "status": "blocked",
@@ -2647,7 +2647,7 @@ class TradingRunner:
         if self.config.strategy in SYNTHETIC_SHORT_STRATEGIES:
             parameters["position_mode"] = "synthetic_short"
             parameters["research_only"] = True
-        elif self.config.strategy in RESEARCH_ONLY_STRATEGIES:
+        elif self.config.strategy in RESEARCH_ONLY_STRATEGIES or self.config.research_only:
             parameters["research_only"] = True
         return parameters
 

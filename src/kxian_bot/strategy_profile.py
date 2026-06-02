@@ -13,6 +13,7 @@ PROFILE_PARAMETER_KEYS = (
     "take_profit_pct",
     "trailing_stop_pct",
     "cooldown_seconds",
+    "research_only",
 )
 
 
@@ -35,6 +36,8 @@ def apply_active_strategy_profile(config: RuntimeConfig, storage: Any) -> Runtim
         updates[key] = _coerce_parameter(key, parameters.get(key, 0.0))
     if "cooldown_seconds" in parameters:
         updates["cooldown_seconds"] = _coerce_parameter("cooldown_seconds", parameters["cooldown_seconds"])
+    if parameters.get("research_only") is True:
+        updates["research_only"] = True
     if not updates:
         return config
     return config.model_copy(update=updates)

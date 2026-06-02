@@ -1,6 +1,6 @@
 # Bitget 实盘灰度手册
 
-本手册只覆盖 `Bitget Spot / BTCUSDT / 4h` 的小额实盘灰度。它不是 Binance Spot Testnet 闭环的替代品，也不把 Bitget 包装成测试网；当前 Bitget 路径是 live-only 灰度，目标是在人工确认后执行一次 5U 以内的 canary，再用查单、撤单、成交同步、账户同步和最终 checklist 复核。
+本手册只覆盖 `Bitget Spot / BTCUSDT / 4h` 的小额实盘灰度。它不是 Binance Spot Testnet 闭环的替代品，也不把 Bitget 包装成测试网；当前 Bitget 路径是 live-only 灰度。只有策略证据门禁、profile、灰度批准和只读准入全部通过后，目标才是在人工确认后执行一次 5U 以内的 canary，再用查单、撤单、成交同步、账户同步和最终 checklist 复核。
 
 如果 `docs/Bitget策略证据研究报告.md` 仍显示 `blocked_before_bitget_live_canary`，或策略证据门禁仍未通过，本手册只执行到只读检查即停止，不得进入批准、profile 写入、canary 或真实下单步骤。
 
@@ -75,6 +75,8 @@ kxian-bot bitget-live-readiness --timeout-seconds 5 --evidence-out artifacts/bit
 该命令固定 `will_submit_orders=false`，不会执行 `approve-bitget-live-gray`、`trade-loop`、`run-once`、`test-order`、`promote-profile-to-live` 或 `cancel-order`。默认也不会访问账户余额或同步成交；只有显式增加 `--include-account` 或 `--sync-fills` 时，才会触达生产账户查询接口或写入本地成交同步结果。
 
 写入 Bitget live 灰度批准证据：
+
+只有 `docs/Bitget策略证据研究报告.md` 不再显示 `blocked_before_bitget_live_canary`，且 `readiness` 不再被策略证据门禁阻断时，才允许执行本节批准命令。
 
 ```powershell
 kxian-bot approve-bitget-live-gray --confirmation LIVE:bitget:BTCUSDT:4h --updated-by <operator>

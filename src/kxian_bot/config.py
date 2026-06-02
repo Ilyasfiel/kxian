@@ -31,6 +31,7 @@ StrategyName = Literal[
     "volatility_breakout_trend",
     "downtrend_breakdown_short",
     "adaptive_range_reclaim",
+    "volatility_regime_pullback_reclaim",
 ]
 
 
@@ -65,6 +66,7 @@ class RuntimeConfig(BaseModel):
     stop_loss_pct: float = Field(default=0.0, ge=0, lt=100)
     take_profit_pct: float = Field(default=0.0, ge=0)
     trailing_stop_pct: float = Field(default=0.0, ge=0, lt=100)
+    research_only: bool = False
     strategy: StrategyName = "moving_average_cross"
     short_window: int = Field(default=5, ge=2)
     long_window: int = Field(default=20, ge=3)

@@ -14,6 +14,7 @@ from kxian_bot.strategies.regime_filtered_ma_cross import RegimeFilteredMovingAv
 from kxian_bot.strategies.rsi_mean_reversion import RsiMeanReversionStrategy
 from kxian_bot.strategies.trend_filtered_ma_cross import TrendFilteredMovingAverageCrossStrategy
 from kxian_bot.strategies.trend_pullback import TrendPullbackStrategy
+from kxian_bot.strategies.volatility_regime_pullback_reclaim import VolatilityRegimePullbackReclaimStrategy
 from kxian_bot.strategies.volatility_breakout_trend import VolatilityBreakoutTrendStrategy
 from kxian_bot.strategies.factory import RESEARCH_ONLY_STRATEGIES, create_strategy
 
@@ -496,3 +497,64 @@ def test_factory_creates_adaptive_range_reclaim_as_research_only():
 
     assert isinstance(strategy, AdaptiveRangeReclaimStrategy)
     assert "adaptive_range_reclaim" in RESEARCH_ONLY_STRATEGIES
+
+
+def test_volatility_regime_pullback_reclaim_waits_for_enough_context():
+    strategy = VolatilityRegimePullbackReclaimStrategy(fast_window=3, context_window=6)
+
+    assert strategy.generate([build_candle(i, 100 + i) for i in range(6)]) is None
+
+
+def test_volatility_regime_pullback_reclaim_buys_quality_pullback_reclaim():
+    strategy = VolatilityRegimePullbackReclaimStrategy(fast_window=3, context_window=6)
+    prices = [100, 104, 108, 112, 108, 112, 115, 113, 114, 115]
+    candles = [build_candle(i, price) for i, price in enumerate(prices)]
+
+    signal = strategy.generate(candles)
+
+    assert signal is not None
+    assert signal.side == "buy"
+    assert signal.reason == "volatility_regime_pullback_reclaim_buy"
+
+
+def test_volatility_regime_pullback_reclaim_buys_range_mid_reclaim():
+    strategy = VolatilityRegimePullbackReclaimStrategy(fast_window=3, context_window=6)
+    prices = [100, 102, 104, 106, 106, 108, 108, 106, 103, 108]
+    candles = [build_candle(i, price) for i, price in enumerate(prices)]
+
+    signal = strategy.generate(candles)
+
+    assert signal is not None
+    assert signal.side == "buy"
+    assert signal.reason == "volatility_regime_pullback_reclaim_buy"
+
+
+def test_volatility_regime_pullback_reclaim_prioritizes_exit_over_new_entry():
+    strategy = VolatilityRegimePullbackReclaimStrategy(fast_window=3, context_window=6)
+    prices = [100, 102, 104, 106, 108, 110, 109, 107, 108, 111]
+    candles = [build_candle(i, price) for i, price in enumerate(prices)]
+
+    signal = strategy.generate(candles)
+
+    assert signal is not None
+    assert signal.side == "sell"
+    assert signal.reason == "volatility_regime_pullback_reclaim_sell"
+
+
+def test_volatility_regime_pullback_reclaim_sells_when_fast_support_breaks():
+    strategy = VolatilityRegimePullbackReclaimStrategy(fast_window=3, context_window=6)
+    prices = [100, 102, 104, 106, 108, 110, 109, 107, 108, 104]
+    candles = [build_candle(i, price) for i, price in enumerate(prices)]
+
+    signal = strategy.generate(candles)
+
+    assert signal is not None
+    assert signal.side == "sell"
+    assert signal.reason == "volatility_regime_pullback_reclaim_sell"
+
+
+def test_factory_creates_volatility_regime_pullback_reclaim_as_research_only():
+    strategy = create_strategy("volatility_regime_pullback_reclaim", short_window=3, long_window=6, symbol="BTCUSDT")
+
+    assert isinstance(strategy, VolatilityRegimePullbackReclaimStrategy)
+    assert "volatility_regime_pullback_reclaim" in RESEARCH_ONLY_STRATEGIES

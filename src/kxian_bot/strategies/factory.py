@@ -15,6 +15,7 @@ from kxian_bot.strategies.regime_filtered_ma_cross import RegimeFilteredMovingAv
 from kxian_bot.strategies.rsi_mean_reversion import RsiMeanReversionStrategy
 from kxian_bot.strategies.trend_filtered_ma_cross import TrendFilteredMovingAverageCrossStrategy
 from kxian_bot.strategies.trend_pullback import TrendPullbackStrategy
+from kxian_bot.strategies.volatility_regime_pullback_reclaim import VolatilityRegimePullbackReclaimStrategy
 from kxian_bot.strategies.volatility_breakout_trend import VolatilityBreakoutTrendStrategy
 
 
@@ -35,9 +36,12 @@ SUPPORTED_STRATEGIES = (
     "volatility_breakout_trend",
     "downtrend_breakdown_short",
     "adaptive_range_reclaim",
+    "volatility_regime_pullback_reclaim",
 )
 
-RESEARCH_ONLY_STRATEGIES = frozenset({"downtrend_breakdown_short", "adaptive_range_reclaim"})
+RESEARCH_ONLY_STRATEGIES = frozenset(
+    {"downtrend_breakdown_short", "adaptive_range_reclaim", "volatility_regime_pullback_reclaim"}
+)
 
 
 def create_strategy(name: str, short_window: int, long_window: int, symbol: str):
@@ -73,4 +77,6 @@ def create_strategy(name: str, short_window: int, long_window: int, symbol: str)
         return DowntrendBreakdownShortStrategy(breakdown_window=short_window, trend_window=long_window, symbol=symbol)
     if name == "adaptive_range_reclaim":
         return AdaptiveRangeReclaimStrategy(fast_window=short_window, context_window=long_window, symbol=symbol)
+    if name == "volatility_regime_pullback_reclaim":
+        return VolatilityRegimePullbackReclaimStrategy(fast_window=short_window, context_window=long_window, symbol=symbol)
     raise ValueError(f"Unsupported strategy: {name}")

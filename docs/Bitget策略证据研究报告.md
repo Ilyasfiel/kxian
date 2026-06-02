@@ -6,11 +6,13 @@
 
 当前结论是：Bitget live-only 只读接入链路可用，生产凭证存在性、live-only endpoint、5U 灰度上限、open orders 清理状态均通过只读检查；但策略证据不足，`readiness` 仍被 `strategy_gate`、`sample_validation_gate`、`stress_gate`、`walk_forward_gate` 阻断。
 
+当前不能完全投入使用的原因不是 Bitget key、余额或交易所连通性，而是策略尚未通过证据门禁。只要该阻断存在，就不能写入 live profile、不能批准灰度、不能执行 5U canary。
+
 因此当前状态必须保持 `blocked_before_bitget_live_canary`。不得执行 `approve-bitget-live-gray`、`trade-loop`、`run-once`、`test-order`、`promote-profile-to-live`，也不得把 `screen-samples` 的失败预筛结果包装成上线证据。
 
 2026-06-02 追加结论：`4h`、`2h`、`1h` 三个周期均未找到跨 5 段样本通过硬门禁的候选。当前阻断不是交易所接入问题，而是策略证据不足；不应写入 live profile，也不应进入 5U canary。
 
-2026-06-02 追加只读研究 harness：CLI 新增全局 `--no-dotenv`，研究筛选可显式跳过项目 `.env` 自动加载，并通过 `screen-samples --exchange/--symbol/--interval` 固定离线证据 scope。注意 `--no-dotenv` 不会清空当前 shell 已有的 `KXIAN_*` 环境变量；完全隔离研究仍需使用干净 shell。新增研究专用现货策略 `adaptive_range_reclaim`，但它被标记为 research-only，`run-once`、`trade-loop` 会返回 `research_only_strategy_runtime_blocked`，包括 active profile 覆盖后的运行路径；任何 `--promote`、profile 晋升、Bitget live gray 批准路径都拒绝 research-only profile。
+2026-06-02 追加只读研究 harness：CLI 新增全局 `--no-dotenv`，研究筛选可显式跳过项目 `.env` 自动加载，并通过 `screen-samples --exchange/--symbol/--interval` 固定离线证据 scope。注意 `--no-dotenv` 不会清空当前 shell 已有的 `KXIAN_*` 环境变量；完全隔离研究仍需使用干净 shell。新增研究专用现货策略 `adaptive_range_reclaim` 与 `volatility_regime_pullback_reclaim`，但它们都被标记为 research-only，`run-once`、`trade-loop` 会返回 `research_only_strategy_runtime_blocked`，包括 active profile 覆盖后的运行路径；任何 `--promote`、profile 晋升、Bitget live gray 批准路径都拒绝 research-only profile。
 
 ## 只读状态
 
@@ -83,6 +85,16 @@
 
 本次只跑首批 40 组固定预算，不把失败结果扩展成结论外推。它只说明该研究假设在当前预算下没有进入 `select-samples` 的资格；后续若继续探索，只能扩大新的假设或重新冻结参数预算，不能降低门禁换取通过。
 
+2026-06-02 追加 `volatility_regime_pullback_reclaim` 固定预算预筛：
+
+| 周期 | 命令安全边界 | 样本数 | 评估组合 | 通过候选 | best failed candidate | 结论 |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| 1h | `--no-dotenv`、离线 CSV、`exchange=bitget` | 5 | 64 / 64 | 0 | 52 笔、min return -0.8556%、PF 0.2933、win rate 26.9231% | 收益过低 |
+| 2h | `--no-dotenv`、离线 CSV、`exchange=bitget` | 5 | 64 / 64 | 0 | 40 笔、min return -0.8003%、PF 0.2851、win rate 35.0% | 收益过低 |
+| 4h | `--no-dotenv`、离线 CSV、`exchange=bitget` | 5 | 64 / 64 | 0 | 44 笔、min return -0.2774%、PF 0.9476、win rate 31.8182% | 收益过低 |
+
+该策略尝试把趋势质量、波动率区间、回踩回收和区间中轴回收组合起来，入口形态包括 `pullback_reclaim` 与 `range_mid_reclaim`。结果仍是 `prefilter_pass_count=0`，说明它在当前 5 段已触碰样本上没有进入完整 `select-samples` 的资格；不得把“4h 最佳失败候选接近盈亏平衡”解读成可灰度证据。
+
 ## 策略假设
 
 旧方向暂停：不继续围绕 BTCUSDT / 4h / long-only 的旧均线参数做无限微调。
@@ -95,6 +107,7 @@
 - 多周期确认假设：4h 信号引入更高周期趋势确认，避免单周期噪声。
 - 研究-only 空头假设：可用于解释下跌段，但在现货实盘路径中不能直接作为可上线做空策略。
 - 研究-only 区间回收假设：`adaptive_range_reclaim` 用于观察下跌或震荡后的回收形态，只能作为离线候选筛选器，不能写入 active profile，也不能进入现货执行入口。
+- 研究-only 波动率状态回踩回收假设：`volatility_regime_pullback_reclaim` 用于观察趋势质量、可交易波动率和回踩/中轴回收的组合信号；当前预筛失败，只能保留为失败归因，不能写入 active profile，也不能进入现货执行入口。
 - 低频突破改造假设：如果继续保留突破类策略，必须明确提高样本外交易数，避免 2 到 18 笔交易的统计置信度不足。
 - 资金费率无关假设：当前是现货路径，不得引入合约资金费率或杠杆收益来美化结果。
 
@@ -145,7 +158,7 @@ Bitget 现货灰度只允许现货语义。任何做空、杠杆、合约策略�
 - `kxian-bot approve-bitget-live-gray`
 - `kxian-bot trade-loop`
 - `kxian-bot run-once`
-- 使用 `adaptive_range_reclaim` 或其他 research-only 策略执行 `run-once` / `trade-loop`
+- 使用 `adaptive_range_reclaim`、`volatility_regime_pullback_reclaim` 或其他 research-only 策略执行 `run-once` / `trade-loop`
 - 将 research-only profile 晋升到 testnet/live，或用于 Bitget live gray 批准
 - `kxian-bot test-order`
 - `kxian-bot promote-profile-to-live`
@@ -163,7 +176,7 @@ Bitget 现货灰度只允许现货语义。任何做空、杠杆、合约策略�
 
 - Bitget 接入可用。
 - 样本质量没有发现基础结构问题。
-- 旧策略族和本轮固定预算新假设预筛均未通过。
+- 旧策略族和本轮固定预算新假设预筛均未通过，包括 `adaptive_range_reclaim` 与 `volatility_regime_pullback_reclaim`。
 - 策略 profile 缺失是合理阻断，不应绕过。
 - 项目必须停在 `blocked_before_bitget_live_canary`。
 

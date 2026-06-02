@@ -2344,6 +2344,86 @@ def test_runner_does_not_promote_research_only_adaptive_range(tmp_path):
     assert runner.storage.active_strategy_profile("paper", "binance", "BTCUSDT", "1m") is None
 
 
+def test_runner_select_strategy_can_compare_research_only_volatility_regime_pullback_reclaim(tmp_path):
+    db_path = tmp_path / "test.sqlite3"
+    _write_price_csv(
+        tmp_path / "candles.csv",
+        [100, 104, 108, 112, 108, 112, 115, 113, 114, 115, 116, 114, 112, 113, 115, 116],
+    )
+    runner = TradingRunner(
+        RuntimeConfig(
+            db_path=str(db_path),
+            market_data_source="sqlite",
+            min_order_usdt=1,
+            min_gate_trades=0,
+            min_gate_return_pct=-100,
+            max_gate_drawdown_pct=100,
+            min_gate_profit_factor=0,
+            min_stress_pass_rate=0,
+            max_stress_drawdown_pct=100,
+            min_walk_forward_trades=0,
+            min_walk_forward_segments=1,
+            min_walk_forward_pass_rate=0,
+            require_sample_validation_gate=False,
+        )
+    )
+
+    result = runner.select_strategy(
+        limit=100,
+        segments=1,
+        input_file=str(tmp_path / "candles.csv"),
+        short_windows=[3],
+        long_windows=[6],
+        top=3,
+        strategies=["volatility_regime_pullback_reclaim"],
+    )
+
+    assert result["candidates"][0]["strategy"] == "volatility_regime_pullback_reclaim"
+    assert result["candidates"][0]["parameters"]["research_only"] is True
+    assert result["candidates"][0]["backtest"]["trade_count"] > 0
+
+
+def test_runner_does_not_promote_research_only_volatility_regime_pullback_reclaim(tmp_path):
+    db_path = tmp_path / "test.sqlite3"
+    _write_price_csv(
+        tmp_path / "candles.csv",
+        [100, 104, 108, 112, 108, 112, 115, 113, 114, 115, 116, 114, 112, 113, 115, 116],
+    )
+    runner = TradingRunner(
+        RuntimeConfig(
+            db_path=str(db_path),
+            market_data_source="sqlite",
+            min_order_usdt=1,
+            min_gate_trades=0,
+            min_gate_return_pct=-100,
+            max_gate_drawdown_pct=100,
+            min_gate_profit_factor=0,
+            min_stress_pass_rate=0,
+            max_stress_drawdown_pct=100,
+            min_walk_forward_trades=0,
+            min_walk_forward_segments=1,
+            min_walk_forward_pass_rate=0,
+            require_sample_validation_gate=False,
+        )
+    )
+
+    result = runner.select_strategy(
+        limit=100,
+        segments=1,
+        input_file=str(tmp_path / "candles.csv"),
+        short_windows=[3],
+        long_windows=[6],
+        top=3,
+        promote=True,
+        strategies=["volatility_regime_pullback_reclaim"],
+    )
+
+    assert result["promoted"]["status"] == "blocked"
+    assert result["promoted"]["reason"] == "research_only_strategy_not_promotable"
+    assert result["candidates"][0]["backtest"]["trade_count"] > 0
+    assert runner.storage.active_strategy_profile("paper", "binance", "BTCUSDT", "1m") is None
+
+
 def test_runner_candidate_selection_ignores_existing_active_profile(tmp_path):
     db_path = tmp_path / "kxian.sqlite3"
     storage = SQLiteStorage(db_path)

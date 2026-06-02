@@ -59,6 +59,8 @@ def test_bitget_strategy_evidence_report_keeps_live_blocked():
     assert "blocked_before_bitget_live_canary" in report
     assert "策略证据不足" in report
     assert "prefilter_pass_count=0" in report
+    assert "volatility_regime_pullback_reclaim" in report
+    assert "adaptive_range_reclaim" in report
     assert "不得执行 `approve-bitget-live-gray`" in report
     assert "`trade-loop`" in report
     assert "`run-once`" in report

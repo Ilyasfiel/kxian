@@ -181,6 +181,8 @@ kxian-bot screen-samples --input-files data/BTCUSDT-1m-2024-01.csv,data/BTCUSDT-
 
 `downtrend_breakdown_short` is a research-only synthetic short candidate. It treats `sell` as short entry and `buy` as cover inside the backtest engine so downside edges can be studied, but promotion is blocked until a real margin or futures execution path exists.
 
+`adaptive_range_reclaim` 和 `volatility_regime_pullback_reclaim` 是 Bitget 离线证据研究专用的 research-only 现货候选。它们可以进入 backtest 和 screener 比较，但不能 promotion、不能 profile approval、不能 `run-once`、不能 `trade-loop`；即使未来筛选结果变好，也必须通过单独代码变更移出 research-only，并重新跑完整证据门禁后，才可能进入执行链路。
+
 When the source file is a high-frequency export, resample it before validation to test lower-noise trading intervals without downloading another file:
 
 ```powershell
@@ -264,10 +266,11 @@ kxian-bot research-strategy --exchange binance --symbol BTCUSDT --interval 1m --
 
 ```powershell
 kxian-bot --no-dotenv screen-samples --exchange bitget --symbol BTCUSDT --interval 4h --input-files "artifacts\bitget_4h_samples\*.csv" --resample-intervals raw --strategies adaptive_range_reclaim --short-windows 3,5,8,12 --long-windows 20,30,50,80 --summary-only
+kxian-bot --no-dotenv screen-samples --exchange bitget --symbol BTCUSDT --interval 4h --input-files "artifacts\bitget_4h_samples\*.csv" --resample-intervals raw --strategies volatility_regime_pullback_reclaim --short-windows 3,5,8,12 --long-windows 20,30,50,80 --stop-loss-pcts 1.5,2 --take-profit-pcts 3,5 --trailing-stop-pcts 0,2 --segments 3 --screen-min-trades 10 --summary-only
 ```
 
-`downtrend_breakdown_short`、`adaptive_range_reclaim` 这类 research-only 策略可以出现在研究输出里，但不得进入执行链路：`--promote` 会返回 `research_only_strategy_not_promotable` 并保持 active profile 不变；`run-once` 和 `trade-loop` 会返回 `research_only_strategy_runtime_blocked`，即使它们是启动后从 SQLite active profile 覆盖进来的也会被拦截；profile 晋升和 Bitget live gray 批准同样拒绝 research-only profile，因此不能提交交易所订单。
-当前 Bitget `adaptive_range_reclaim` 在 `1h/2h/4h` 首批固定预算预筛中均为 `prefilter_pass_count=0`，因此仍停在只读研究阶段，不得进入 `select-samples`、profile 写入、灰度批准或 5U canary。
+`downtrend_breakdown_short`、`adaptive_range_reclaim`、`volatility_regime_pullback_reclaim` 这类 research-only 策略可以出现在研究输出里，但不得进入执行链路：`--promote` 会返回 `research_only_strategy_not_promotable` 并保持 active profile 不变；`run-once` 和 `trade-loop` 会返回 `research_only_strategy_runtime_blocked`，即使它们是启动后从 SQLite active profile 覆盖进来的也会被拦截；profile 晋升和 Bitget live gray 批准同样拒绝 research-only profile，因此不能提交交易所订单。
+当前 Bitget `adaptive_range_reclaim` 与 `volatility_regime_pullback_reclaim` 在 `1h/2h/4h` 固定预算预筛中均为 `prefilter_pass_count=0`，因此仍停在只读研究阶段，不得进入 `select-samples`、profile 写入、灰度批准或 5U canary。
 Add `--summary-only` when you only want the compact decision output instead of the full prepare/selection tree.
 
 ## Batch backtest
@@ -385,7 +388,9 @@ Optional protective exits can close an existing long position before the next st
 kxian-bot live-setup-check --timeout-seconds 5
 ```
 
-只有当 `live-setup-check` 返回 `status=pass`、`phase=ready_for_bounded_live_canary`，且 `launch-checklist --target live` 返回 `phase=ready_for_bounded_live_loop` 后，操作者才可以人工批准一次 `trade-loop --max-iterations 1 --sleep-seconds 0` 小额 canary。该检查不会执行 `promote-profile-to-live`，不会发起订单，也不会回显 API key/secret。
+Binance/OKX 这类走测试网闭环晋升的路径，只有当 `live-setup-check` 返回 `status=pass`、`phase=ready_for_bounded_live_canary`，且 `launch-checklist --target live` 返回 `phase=ready_for_bounded_live_loop` 后，操作者才可以人工批准一次 `trade-loop --max-iterations 1 --sleep-seconds 0` 小额 canary。该检查不会执行 `promote-profile-to-live`，不会发起订单，也不会回显 API key/secret。
+
+Bitget live-only 灰度的时序不同：策略证据未过时必须停在只读研究；证据、profile、灰度批准和 `live-setup-check` 全部满足后，`launch-checklist --target live` 可能仍因缺少本轮 canary 证据而保持 `blocked_before_bitget_live_canary`。这只表示可以进入一次人工批准的 bounded canary 前置点，不表示可以多轮运行；单轮 canary 后必须再次跑 `launch-checklist --target live`，最终到 `ready_for_bounded_live_loop` 才算完成灰度复核。
 
 实盘自动化仍然执行同一套 preflight 门禁，会刷新未完成订单、同步账户和成交、拒绝未知成本价持仓，并把订单、成交、循环事件和风险状态记录到 SQLite。`promote-profile-to-live` 和 `launch-checklist --target live` 都要求同一交易所、交易对、周期已经通过非下单测试网观察和 bounded 测试网下单观察。
 
