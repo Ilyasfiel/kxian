@@ -1701,6 +1701,50 @@ def test_trading_rules_cli_refreshes_bitget_rule(monkeypatch, capsys, tmp_path):
     assert stored["min_notional"] == 1.0
 
 
+def test_trading_rules_cli_uses_relaxed_config_for_live_bitget(monkeypatch, capsys, tmp_path):
+    db_path = tmp_path / "test.sqlite3"
+    received = {}
+
+    def fake_load_config(validate_execution=True):
+        received["validate_execution"] = validate_execution
+        return RuntimeConfig(
+            mode="live",
+            exchange="bitget",
+            db_path=str(db_path),
+            use_testnet=False,
+            allow_live=False,
+        )
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(
+        cli,
+        "fetch_bitget_trading_rule",
+        lambda symbol: {
+            "price_step": 0.01,
+            "quantity_step": 0.000001,
+            "min_quantity": 0.0,
+            "min_notional": 5.0,
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "trading-rules",
+            "--symbol",
+            "BTCUSDT",
+            "--refresh-from-exchange",
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert received["validate_execution"] is False
+    assert output["exchange"] == "bitget"
+    assert output["min_notional"] == 5.0
+
+
 def test_approve_bitget_live_gray_cli(monkeypatch, capsys, tmp_path):
     db_path = tmp_path / "test.sqlite3"
     captured = {}

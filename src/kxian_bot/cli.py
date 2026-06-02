@@ -479,6 +479,7 @@ def main() -> None:
         "testnet-observe",
         "testnet-setup-check",
         "approve-bitget-live-gray",
+        "trading-rules",
         "trade-loop",
     }
     config = load_config(validate_execution=False) if args.command in relaxed_config_commands else load_config()

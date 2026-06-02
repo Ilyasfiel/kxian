@@ -460,7 +460,7 @@ class LiveBrokerPlaceholder:
         params: dict[str, str] | None = None,
         body: str = "",
     ) -> SignedOrderRequest:
-        params = params or {}
+        params = dict(sorted((params or {}).items()))
         query = urlencode(params)
         path_with_query = f"{request_path}?{query}" if query else request_path
         payload = f"{timestamp}{method.upper()}{path_with_query}{body}"

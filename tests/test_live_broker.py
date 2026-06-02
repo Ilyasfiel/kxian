@@ -584,6 +584,35 @@ def test_bitget_signed_live_order_request():
     assert "ACCESS-KEY" not in dumped or "<redacted>" in dumped
 
 
+def test_bitget_get_request_signs_sorted_query_params():
+    broker = LiveBrokerPlaceholder(
+        RuntimeConfig(
+            mode="live",
+            exchange="bitget",
+            allow_live=True,
+            use_testnet=False,
+            bitget_api_key="api-key",
+            bitget_api_secret="secret",
+            bitget_api_passphrase="passphrase",
+        )
+    )
+
+    request = broker._build_bitget_signed_request(
+        "GET",
+        "/api/v2/spot/trade/orderInfo",
+        timestamp="1700000000000",
+        params={"symbol": "BTCUSDT", "orderId": "abc"},
+    )
+
+    payload = "1700000000000GET/api/v2/spot/trade/orderInfo?orderId=abc&symbol=BTCUSDT"
+    expected_signature = base64.b64encode(
+        hmac.new(b"secret", payload.encode("utf-8"), hashlib.sha256).digest()
+    ).decode("utf-8")
+    assert request.params == {"orderId": "abc", "symbol": "BTCUSDT"}
+    assert request.signature_payload == payload
+    assert request.headers["ACCESS-SIGN"] == expected_signature
+
+
 def test_bitget_testnet_submit_order_is_blocked():
     session = FakeSession(FakeResponse({"code": "00000", "data": {"orderId": "abc"}}))
     broker = LiveBrokerPlaceholder(

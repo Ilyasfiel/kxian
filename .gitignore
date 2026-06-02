@@ -3,6 +3,9 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .env
+bian.env
+*.local.env
+*.secret.env
 artifacts/
 *.log
 dist/
