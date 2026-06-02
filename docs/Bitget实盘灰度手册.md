@@ -64,6 +64,14 @@ kxian-bot readiness
 kxian-bot exchange-health --timeout-seconds 5
 ```
 
+也可以使用 Bitget 不下单验收命令一次性生成脱敏证据包：
+
+```powershell
+kxian-bot bitget-live-readiness --timeout-seconds 5 --evidence-out artifacts/bitget-live-readiness.json
+```
+
+该命令固定 `will_submit_orders=false`，不会执行 `approve-bitget-live-gray`、`trade-loop`、`run-once`、`test-order`、`promote-profile-to-live` 或 `cancel-order`。默认也不会访问账户余额或同步成交；只有显式增加 `--include-account` 或 `--sync-fills` 时，才会触达生产账户查询接口或写入本地成交同步结果。
+
 写入 Bitget live 灰度批准证据：
 
 ```powershell
@@ -177,7 +185,7 @@ phase=ready_for_bounded_live_loop
 
 ## 后续优化
 
-- 增加 `--evidence-out` 的 Bitget 脱敏证据包，记录 approval id、订单生命周期、成交同步、账户同步和 endpoint。
+- `bitget-live-readiness --evidence-out` 已可生成不下单脱敏证据包；后续增强 approval id、canary 生命周期、成交同步和账户同步的更细粒度摘要。
 - 增加专用 `bitget-live-canary` 编排命令，把只读检查、单轮执行和复核输出串起来，但执行前仍需显式确认。
 - Dashboard 增加 Bitget 灰度步骤条和证据下载。
 - 将“提现已禁用、IP 白名单已确认”写入结构化审批证据。

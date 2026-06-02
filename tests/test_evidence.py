@@ -3,7 +3,10 @@ import re
 
 from kxian_bot.config import RuntimeConfig
 from kxian_bot.evidence import (
+    BITGET_LIVE_EVIDENCE_REQUIRED_KEYS,
     TESTNET_EVIDENCE_REQUIRED_KEYS,
+    bitget_live_evidence_contract_failures,
+    build_bitget_live_evidence,
     build_testnet_evidence,
     redact_for_evidence,
     testnet_evidence_contract_failures as evidence_contract_failures,
@@ -114,6 +117,78 @@ def test_build_testnet_evidence_uses_fixed_scope_and_no_secret_values(tmp_path):
     assert evidence["audit"]["schema_validation"]["failures"] == []
     assert re.fullmatch(r"[0-9a-f]{64}", evidence["audit"]["content_sha256"])
     assert evidence_contract_failures(evidence) == []
+
+
+def test_build_bitget_live_evidence_uses_live_scope_and_redacts(tmp_path):
+    storage = SQLiteStorage(tmp_path / "kxian.sqlite3")
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        use_testnet=False,
+        allow_live=True,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=5,
+        db_path=str(tmp_path / "kxian.sqlite3"),
+        bitget_api_key="bitget-key-value",
+        bitget_api_secret="bitget-secret-value",
+        bitget_api_passphrase="bitget-passphrase-value",
+    )
+
+    evidence = build_bitget_live_evidence(
+        config,
+        storage,
+        command="bitget-live-readiness",
+        readiness={"status": "fail", "checks": [{"name": "preflight", "status": "fail", "details": {"failed_checks": ["strategy_gate"]}}]},
+        exchange_health={"status": "pass", "checks": [{"name": "trading_endpoint", "status": "pass"}]},
+        live_setup_check={"status": "blocked", "will_submit_orders": False},
+        launch_checklist={
+            "status": "blocked",
+            "phase": "blocked_before_bitget_live_canary",
+            "checks": [
+                {
+                    "name": "bitget_live_canary_order",
+                    "status": "fail",
+                    "details": {
+                        "failures": ["missing_bitget_live_canary_order"],
+                        "latest_order": {"exchange_order_id": "real-order-id"},
+                    },
+                }
+            ],
+        },
+    )
+
+    raw = json.dumps(evidence)
+    assert set(evidence) == BITGET_LIVE_EVIDENCE_REQUIRED_KEYS
+    assert evidence["schema"] == "kxian.bitget_live.evidence.v1"
+    assert evidence["scope"]["mode"] == "live"
+    assert evidence["scope"]["exchange"] == "bitget"
+    assert evidence["scope"]["symbol"] == "BTCUSDT"
+    assert evidence["scope"]["interval"] == "4h"
+    assert evidence["scope"]["use_testnet"] is False
+    assert evidence["credentials"]["present"] == {
+        "bitget_api_key": True,
+        "bitget_api_secret": True,
+        "bitget_api_passphrase": True,
+    }
+    assert evidence["safety"]["will_submit_orders"] is False
+    assert evidence["acceptance"]["live_ready"] is False
+    assert evidence["acceptance"]["canary_ready"] is False
+    assert evidence["redaction"]["credential_presence"] == "boolean_only"
+    assert evidence["redaction"]["order_ids"] == "status_summary_only"
+    assert "bitget-key-value" not in raw
+    assert "bitget-secret-value" not in raw
+    assert "bitget-passphrase-value" not in raw
+    assert "real-order-id" not in raw
+    assert evidence["audit"]["command_context"]["profile_key"] == "live:bitget:BTCUSDT:4h"
+    assert evidence["audit"]["schema_validation"]["status"] == "pass"
+    assert evidence["audit"]["schema_validation"]["validator"] == "bitget_live_evidence_contract_failures"
+    assert re.fullmatch(r"[0-9a-f]{64}", evidence["audit"]["content_sha256"])
+    assert bitget_live_evidence_contract_failures(evidence) == []
 
 
 def test_build_testnet_evidence_redacts_config_secret_values_in_messages(tmp_path):

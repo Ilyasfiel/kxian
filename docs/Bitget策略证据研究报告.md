@@ -134,7 +134,7 @@ Bitget 现货灰度只允许现货语义。任何做空、杠杆、合约策略�
 下一阶段建议优先做 P0 工程增强：
 
 - Bitget live 脱敏证据包：导出配置摘要、endpoint、readiness、live setup、launch checklist、open orders、账户同步、成交同步、canary 生命周期和内容哈希，不包含 key、secret、passphrase、signature、headers 原文。
-- Bitget 只读验收一键命令：固定串联 readiness、exchange-health、trading-rules、account-balance、sync-fills、live-setup-check、launch-checklist，输出必须标明 `will_submit_orders=false`。
+- Bitget 只读验收一键命令：固定串联 readiness、exchange-health、live-setup-check、launch-checklist，并输出 `will_submit_orders=false`；默认不访问账户余额、不同步成交，只有显式增加 `--include-account` 或 `--sync-fills` 时才触达账户查询或写入本地成交同步摘要。
 - 独立审计事件表：记录命令名、scope、执行者、结果、失败原因、证据哈希、是否只读、是否可能下单。
 
 P1 可继续增强 Dashboard 的 Bitget live-only 步骤条和证据下载按钮。按钮必须有 loading、disabled、`aria-busy`、成功/失败 toast 和固定结果区反馈。

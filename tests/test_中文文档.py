@@ -42,6 +42,10 @@ def test_bitget_gray_runbook_covers_manual_confirmation_and_single_canary():
     assert "sync-fills" in runbook
     assert "launch-checklist --target live" in runbook
     assert "status=pass" in runbook
+    assert "bitget-live-readiness" in runbook
+    assert "will_submit_orders=false" in runbook
+    assert "--include-account" in runbook
+    assert "--sync-fills" in runbook
     assert "strategy_gate" in runbook
     assert "sample_validation_gate" in runbook
     assert "stress_gate" in runbook

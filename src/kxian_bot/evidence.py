@@ -16,6 +16,8 @@ from kxian_bot.testnet_dry_run import exchange_credential_status
 
 TESTNET_EVIDENCE_SCHEMA = "kxian.testnet.evidence.v1"
 TESTNET_EVIDENCE_SCHEMA_VERSION = 1
+BITGET_LIVE_EVIDENCE_SCHEMA = "kxian.bitget_live.evidence.v1"
+BITGET_LIVE_EVIDENCE_SCHEMA_VERSION = 1
 TESTNET_EVIDENCE_TOP_LEVEL_KEYS = frozenset(
     {
         "schema",
@@ -35,12 +37,40 @@ TESTNET_EVIDENCE_TOP_LEVEL_KEYS = frozenset(
     }
 )
 TESTNET_EVIDENCE_REQUIRED_KEYS = TESTNET_EVIDENCE_TOP_LEVEL_KEYS
+BITGET_LIVE_EVIDENCE_TOP_LEVEL_KEYS = frozenset(
+    {
+        "schema",
+        "schema_version",
+        "generated_at",
+        "command",
+        "scope",
+        "credentials",
+        "readiness",
+        "exchange_health",
+        "live_setup_check",
+        "launch_checklist",
+        "account_balance",
+        "sync_fills",
+        "audit",
+        "acceptance",
+        "redaction",
+        "safety",
+    }
+)
+BITGET_LIVE_EVIDENCE_REQUIRED_KEYS = BITGET_LIVE_EVIDENCE_TOP_LEVEL_KEYS
 TESTNET_SCOPE = {
     "mode": "testnet",
     "exchange": "binance",
     "symbol": "BTCUSDT",
     "interval": "4h",
     "use_testnet": True,
+}
+BITGET_LIVE_SCOPE = {
+    "mode": "live",
+    "exchange": "bitget",
+    "symbol": "BTCUSDT",
+    "interval": "4h",
+    "use_testnet": False,
 }
 SENSITIVE_KEY_PARTS = (
     "api_key",
@@ -188,8 +218,106 @@ def build_testnet_evidence(
     return evidence
 
 
+def build_bitget_live_evidence(
+    config: RuntimeConfig,
+    storage: SQLiteStorage,
+    *,
+    command: str,
+    readiness: dict[str, Any] | None = None,
+    exchange_health: dict[str, Any] | None = None,
+    live_setup_check: dict[str, Any] | None = None,
+    launch_checklist: dict[str, Any] | None = None,
+    account_balance: dict[str, Any] | None = None,
+    sync_fills: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    bitget_config = _bitget_live_config(config)
+    _, credential_presence = exchange_credential_status(bitget_config)
+    sensitive_values = _config_sensitive_values(bitget_config)
+    profile = storage.active_strategy_profile(
+        "live",
+        bitget_config.exchange,
+        bitget_config.symbol,
+        bitget_config.interval,
+    )
+    audit = {
+        "git_commit": _current_git_commit(),
+        "dirty_worktree": _git_dirty_worktree(),
+        "command_context": _audit_command_context(
+            command=command,
+            config=bitget_config,
+            profile=profile,
+            result=live_setup_check,
+            launch_checklist=launch_checklist,
+        ),
+    }
+    evidence = redact_for_evidence(
+        {
+            "schema": BITGET_LIVE_EVIDENCE_SCHEMA,
+            "schema_version": BITGET_LIVE_EVIDENCE_SCHEMA_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "command": command,
+            "scope": _config_scope(bitget_config),
+            "credentials": {
+                "required": True,
+                "present": {
+                    "bitget_api_key": bool(credential_presence.get("bitget_api_key")),
+                    "bitget_api_secret": bool(credential_presence.get("bitget_api_secret")),
+                    "bitget_api_passphrase": bool(credential_presence.get("bitget_api_passphrase")),
+                },
+            },
+            "readiness": _status_summary(readiness, include_checks=True),
+            "exchange_health": _status_summary(exchange_health, include_checks=True),
+            "live_setup_check": _status_summary(live_setup_check, include_checks=True),
+            "launch_checklist": _bitget_launch_summary(launch_checklist),
+            "account_balance": _status_summary(account_balance, include_checks=False) if account_balance is not None else None,
+            "sync_fills": _status_summary(sync_fills, include_checks=False) if sync_fills is not None else None,
+            "audit": audit,
+            "acceptance": {
+                "required_status": "pass",
+                "required_phase": "ready_for_bounded_live_loop",
+                "status": launch_checklist.get("status") if isinstance(launch_checklist, dict) else None,
+                "phase": launch_checklist.get("phase") if isinstance(launch_checklist, dict) else None,
+                "live_ready": False,
+                "canary_ready": False,
+            },
+            "redaction": {
+                "credential_values": "redacted",
+                "credential_presence": "boolean_only",
+                "sensitive_headers": "redacted",
+                "signatures": "redacted",
+                "order_ids": "status_summary_only",
+            },
+            "safety": {
+                "will_submit_orders": False,
+                "approve_executed": False,
+                "trade_loop_executed": False,
+                "run_once_executed": False,
+                "test_order_executed": False,
+                "cancel_order_executed": False,
+                "promote_executed": False,
+            },
+        },
+        sensitive_values=sensitive_values,
+    )
+    validation_failures = _bitget_live_evidence_contract_failures(evidence, require_audit_integrity=False)
+    audit = evidence.get("audit")
+    if isinstance(audit, dict):
+        audit["schema_validation"] = {
+            "status": "pass" if not validation_failures else "fail",
+            "validator": "bitget_live_evidence_contract_failures",
+            "failure_count": len(validation_failures),
+            "failures": validation_failures,
+        }
+        audit["content_sha256"] = _evidence_content_hash(evidence)
+    return evidence
+
+
 def testnet_evidence_contract_failures(evidence: dict[str, Any]) -> list[str]:
     return _testnet_evidence_contract_failures(evidence, require_audit_integrity=True)
+
+
+def bitget_live_evidence_contract_failures(evidence: dict[str, Any]) -> list[str]:
+    return _bitget_live_evidence_contract_failures(evidence, require_audit_integrity=True)
 
 
 def _testnet_evidence_contract_failures(evidence: dict[str, Any], *, require_audit_integrity: bool) -> list[str]:
@@ -314,7 +442,171 @@ def _testnet_evidence_contract_failures(evidence: dict[str, Any], *, require_aud
     return failures
 
 
+def _bitget_live_evidence_contract_failures(evidence: dict[str, Any], *, require_audit_integrity: bool) -> list[str]:
+    failures: list[str] = []
+    keys = set(evidence)
+    missing = BITGET_LIVE_EVIDENCE_REQUIRED_KEYS - keys
+    extra = keys - BITGET_LIVE_EVIDENCE_TOP_LEVEL_KEYS
+    if missing:
+        failures.append(f"missing_top_level_keys:{','.join(sorted(missing))}")
+    if extra:
+        failures.append(f"unexpected_top_level_keys:{','.join(sorted(extra))}")
+    if evidence.get("schema") != BITGET_LIVE_EVIDENCE_SCHEMA:
+        failures.append("invalid_schema")
+    if evidence.get("schema_version") != BITGET_LIVE_EVIDENCE_SCHEMA_VERSION:
+        failures.append("invalid_schema_version")
+    command = evidence.get("command")
+    if not isinstance(command, str) or not command:
+        failures.append("invalid_command")
+    _append_audit_failures(
+        failures,
+        evidence,
+        command=command,
+        expected_scope=BITGET_LIVE_SCOPE,
+        expected_profile_key="live:bitget:BTCUSDT:4h",
+        validator="bitget_live_evidence_contract_failures",
+        contract_func=_bitget_live_evidence_contract_failures,
+        require_audit_integrity=require_audit_integrity,
+    )
+    scope = evidence.get("scope")
+    if not isinstance(scope, dict):
+        failures.append("missing_scope")
+    else:
+        for key, expected in BITGET_LIVE_SCOPE.items():
+            if scope.get(key) != expected:
+                failures.append(f"invalid_scope:{key}")
+        if scope.get("allow_live") is not True:
+            failures.append("allow_live_must_be_true")
+        if scope.get("live_dry_run") is not False:
+            failures.append("live_dry_run_must_be_false")
+        if scope.get("enable_live_autotrade") is not True:
+            failures.append("enable_live_autotrade_must_be_true")
+        if scope.get("live_confirmation_present") is not True:
+            failures.append("live_confirmation_present_must_be_true")
+        if scope.get("live_credentials_confirmed") is not True:
+            failures.append("live_credentials_confirmed_must_be_true")
+    credentials = evidence.get("credentials")
+    if not isinstance(credentials, dict) or not isinstance(credentials.get("present"), dict):
+        failures.append("invalid_credentials")
+    else:
+        expected_credentials = {"bitget_api_key", "bitget_api_secret", "bitget_api_passphrase"}
+        present = credentials["present"]
+        if set(present) != expected_credentials:
+            failures.append("invalid_bitget_credential_scope")
+        for key, value in present.items():
+            if not isinstance(value, bool):
+                failures.append(f"credential_presence_must_be_boolean:{key}")
+    safety = evidence.get("safety")
+    if not isinstance(safety, dict):
+        failures.append("missing_safety")
+    else:
+        if safety.get("will_submit_orders") is not False:
+            failures.append("will_submit_orders_must_be_false")
+        for key in (
+            "approve_executed",
+            "trade_loop_executed",
+            "run_once_executed",
+            "test_order_executed",
+            "cancel_order_executed",
+            "promote_executed",
+        ):
+            if safety.get(key) is not False:
+                failures.append(f"safety_flag_must_be_false:{key}")
+    acceptance = evidence.get("acceptance")
+    if not isinstance(acceptance, dict):
+        failures.append("missing_acceptance")
+    else:
+        if acceptance.get("live_ready") is not False:
+            failures.append("acceptance_live_ready_must_be_false")
+        if acceptance.get("canary_ready") is not False:
+            failures.append("acceptance_canary_ready_must_be_false")
+    return failures
+
+
+def _append_audit_failures(
+    failures: list[str],
+    evidence: dict[str, Any],
+    *,
+    command: Any,
+    expected_scope: dict[str, Any],
+    expected_profile_key: str,
+    validator: str,
+    contract_func,
+    require_audit_integrity: bool,
+) -> None:
+    audit = evidence.get("audit")
+    if not isinstance(audit, dict):
+        failures.append("missing_audit")
+        return
+    git_commit = audit.get("git_commit")
+    if not isinstance(git_commit, str) or (git_commit != "unknown" and not re.fullmatch(r"[0-9a-f]{40}", git_commit)):
+        failures.append("invalid_audit_git_commit")
+    dirty_worktree = audit.get("dirty_worktree")
+    if dirty_worktree not in {True, False, "unknown"}:
+        failures.append("invalid_audit_dirty_worktree")
+    command_context = audit.get("command_context")
+    if not isinstance(command_context, dict):
+        failures.append("missing_audit_command_context")
+    else:
+        if not isinstance(command_context.get("command"), str) or not command_context.get("command"):
+            failures.append("invalid_audit_command")
+        elif command_context.get("command") != command:
+            failures.append("invalid_audit_command_context:command")
+        if command_context.get("profile_key") != expected_profile_key:
+            failures.append("invalid_audit_profile_key")
+        for key, expected in expected_scope.items():
+            if command_context.get(key) != expected:
+                failures.append(f"invalid_audit_command_context:{key}")
+    schema_validation = audit.get("schema_validation")
+    if require_audit_integrity and schema_validation is None:
+        failures.append("missing_audit_schema_validation")
+    elif require_audit_integrity and not isinstance(schema_validation, dict):
+        failures.append("invalid_audit_schema_validation")
+    elif isinstance(schema_validation, dict):
+        schema_shape_valid = True
+        if schema_validation.get("validator") != validator:
+            failures.append("invalid_audit_schema_validator")
+            schema_shape_valid = False
+        if schema_validation.get("status") not in {"pass", "fail"}:
+            failures.append("invalid_audit_schema_validation_status")
+            schema_shape_valid = False
+        if not isinstance(schema_validation.get("failure_count"), int) or schema_validation["failure_count"] < 0:
+            failures.append("invalid_audit_schema_failure_count")
+            schema_shape_valid = False
+        failures_list = schema_validation.get("failures")
+        if not isinstance(failures_list, list) or any(not isinstance(item, str) for item in failures_list):
+            failures.append("invalid_audit_schema_failures")
+            schema_shape_valid = False
+        elif schema_validation.get("status") == "pass" and (schema_validation.get("failure_count") != 0 or failures_list):
+            failures.append("invalid_audit_schema_validation_pass_mismatch")
+            schema_shape_valid = False
+        elif schema_validation.get("status") == "fail" and (schema_validation.get("failure_count", 0) <= 0 or not failures_list):
+            failures.append("invalid_audit_schema_validation_fail_mismatch")
+            schema_shape_valid = False
+        if require_audit_integrity and schema_shape_valid:
+            expected_failures = contract_func(evidence, require_audit_integrity=False)
+            expected_status = "pass" if not expected_failures else "fail"
+            if (
+                schema_validation.get("status") != expected_status
+                or schema_validation.get("failure_count") != len(expected_failures)
+                or failures_list != expected_failures
+            ):
+                failures.append("invalid_audit_schema_validation_current_mismatch")
+    elif schema_validation is not None:
+        if not isinstance(schema_validation, dict):
+            failures.append("invalid_audit_schema_validation")
+    content_sha256 = audit.get("content_sha256")
+    if require_audit_integrity and content_sha256 is None:
+        failures.append("missing_audit_content_sha256")
+    elif content_sha256 is not None:
+        if not isinstance(content_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", content_sha256):
+            failures.append("invalid_audit_content_sha256")
+        elif content_sha256 != _evidence_content_hash(evidence):
+            failures.append("invalid_audit_content_sha256_mismatch")
+
+
 testnet_evidence_contract_failures.__test__ = False
+bitget_live_evidence_contract_failures.__test__ = False
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -344,6 +636,9 @@ def _config_sensitive_values(config: RuntimeConfig) -> list[str]:
         config.okx_api_key,
         config.okx_api_secret,
         config.okx_api_passphrase,
+        config.bitget_api_key,
+        config.bitget_api_secret,
+        config.bitget_api_passphrase,
     ]
 
 
@@ -361,6 +656,19 @@ def _testnet_config(config: RuntimeConfig) -> RuntimeConfig:
             "enable_live_autotrade": False,
             "live_confirmation": "",
             "live_credentials_confirmed": False,
+        }
+    )
+
+
+def _bitget_live_config(config: RuntimeConfig) -> RuntimeConfig:
+    return config.model_copy(
+        update={
+            "mode": "live",
+            "exchange": "bitget",
+            "symbol": "BTCUSDT",
+            "interval": "4h",
+            "use_testnet": False,
+            "market_data_source": "exchange",
         }
     )
 
@@ -392,7 +700,7 @@ def _audit_command_context(
 ) -> dict[str, Any]:
     return {
         "command": command,
-        "profile_key": (profile or {}).get("profile_key") or "testnet:binance:BTCUSDT:4h",
+        "profile_key": (profile or {}).get("profile_key") or f"{config.mode}:{config.exchange}:{config.symbol}:{config.interval}",
         "mode": config.mode,
         "exchange": config.exchange,
         "symbol": config.symbol,
@@ -402,6 +710,64 @@ def _audit_command_context(
         "result_reason": result.get("reason") if isinstance(result, dict) else None,
         "launch_checklist_status": launch_checklist.get("status") if isinstance(launch_checklist, dict) else None,
         "launch_checklist_phase": launch_checklist.get("phase") if isinstance(launch_checklist, dict) else None,
+    }
+
+
+def _status_summary(payload: dict[str, Any] | None, *, include_checks: bool) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    summary: dict[str, Any] = {
+        "status": payload.get("status"),
+        "reason": payload.get("reason"),
+        "phase": payload.get("phase"),
+        "mode": payload.get("mode"),
+        "exchange": payload.get("exchange"),
+        "symbol": payload.get("symbol"),
+        "interval": payload.get("interval"),
+        "will_submit_orders": payload.get("will_submit_orders"),
+        "timeout_seconds": payload.get("timeout_seconds"),
+    }
+    if include_checks and isinstance(payload.get("checks"), list):
+        summary["checks"] = [
+            {
+                "name": check.get("name"),
+                "status": check.get("status"),
+                "message": check.get("message"),
+                "failures": (check.get("details") or {}).get("failures") if isinstance(check.get("details"), dict) else None,
+                "failed_checks": (check.get("details") or {}).get("failed_checks") if isinstance(check.get("details"), dict) else None,
+            }
+            for check in payload["checks"]
+            if isinstance(check, dict)
+        ]
+    return {key: value for key, value in summary.items() if value is not None}
+
+
+def _bitget_launch_summary(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    checks = []
+    for check in payload.get("checks", []):
+        if not isinstance(check, dict):
+            continue
+        details = check.get("details") if isinstance(check.get("details"), dict) else {}
+        checks.append(
+            {
+                "name": check.get("name"),
+                "status": check.get("status"),
+                "message": check.get("message"),
+                "failures": details.get("failures"),
+                "open_order_count": details.get("open_order_count"),
+            }
+        )
+    return {
+        "status": payload.get("status"),
+        "reason": payload.get("reason"),
+        "phase": payload.get("phase"),
+        "target_mode": payload.get("target_mode"),
+        "exchange": payload.get("exchange"),
+        "symbol": payload.get("symbol"),
+        "interval": payload.get("interval"),
+        "checks": checks,
     }
 
 

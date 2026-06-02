@@ -2,7 +2,7 @@ import json
 
 from kxian_bot import cli
 from kxian_bot.config import RuntimeConfig
-from kxian_bot.models import Candle, LoopEvent
+from kxian_bot.models import AccountBalance, Candle, LoopEvent
 
 
 class FakeBroker:
@@ -779,6 +779,241 @@ def test_live_setup_check_cli_returns_zero_when_passed(monkeypatch, capsys, tmp_
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "pass"
     assert output["will_submit_orders"] is False
+
+
+def test_bitget_live_readiness_cli_writes_redacted_evidence_without_account_by_default(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        use_testnet=False,
+        allow_live=True,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=5,
+        db_path=str(tmp_path / "test.sqlite3"),
+        bitget_api_key="bitget-key-value",
+        bitget_api_secret="bitget-secret-value",
+        bitget_api_passphrase="bitget-passphrase-value",
+    )
+    evidence_path = tmp_path / "artifacts" / "bitget-live.json"
+    received = {}
+
+    def fake_load_config(validate_execution=True):
+        received["validate_execution"] = validate_execution
+        return config
+
+    monkeypatch.setattr(cli, "load_config", fake_load_config)
+    monkeypatch.setattr(cli, "run_readiness", lambda received_config, storage=None: {"status": "fail", "checks": [{"name": "preflight", "status": "fail"}]})
+    monkeypatch.setattr(cli, "run_exchange_health_check", lambda received_config, timeout_seconds=5.0: {"status": "pass", "timeout_seconds": timeout_seconds})
+    monkeypatch.setattr(cli, "run_live_setup_check", lambda received_config, timeout_seconds=5.0: {"status": "blocked", "will_submit_orders": False, "timeout_seconds": timeout_seconds})
+    monkeypatch.setattr(
+        cli,
+        "run_launch_checklist",
+        lambda received_config, target_mode=None: {
+            "status": "blocked",
+            "phase": "blocked_before_bitget_live_canary",
+            "target_mode": target_mode,
+            "checks": [
+                {
+                    "name": "bitget_live_canary_order",
+                    "status": "fail",
+                    "details": {
+                        "failures": ["missing_bitget_live_canary_order"],
+                        "latest_order": {"exchange_order_id": "live-order-id"},
+                    },
+                }
+            ],
+            "latest_order": {"exchange_order_id": "live-order-id"},
+            "open_orders": [{"exchange_order_id": "open-order-id"}],
+            "next_steps": ["strategy evidence is still blocked"],
+        },
+    )
+    monkeypatch.setattr(cli, "create_broker", lambda received_config: (_ for _ in ()).throw(AssertionError("account broker must not be created by default")))
+    monkeypatch.setattr(cli, "TradingRunner", lambda received_config: (_ for _ in ()).throw(AssertionError("sync runner must not be created by default")))
+    monkeypatch.setattr("sys.argv", ["kxian-bot", "bitget-live-readiness", "--timeout-seconds", "1.5", "--evidence-out", str(evidence_path)])
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected bitget-live-readiness to exit while blocked")
+
+    output = json.loads(capsys.readouterr().out)
+    assert received["validate_execution"] is False
+    assert output["status"] == "blocked"
+    assert output["will_submit_orders"] is False
+    assert output["include_account"] is False
+    assert output["sync_fills"] is False
+    assert output["account_balance"] is None
+    assert output["sync_fills_result"] is None
+    assert output["next_steps"][0].startswith("do not run approve-bitget-live-gray")
+    assert "trade-loop" in output["next_steps"][0]
+    assert all("promotion" not in step for step in output["next_steps"][2:])
+    assert all("canary" not in step.lower() for step in output["next_steps"][2:])
+    stdout = json.dumps(output)
+    assert "live-order-id" not in stdout
+    assert "open-order-id" not in stdout
+    assert "exchange_order_id" not in stdout
+    assert "client_order_id" not in stdout
+    assert '"order_id"' not in stdout
+    saved_text = evidence_path.read_text(encoding="utf-8")
+    saved = json.loads(saved_text)
+    assert saved["schema"] == "kxian.bitget_live.evidence.v1"
+    assert saved["scope"]["mode"] == "live"
+    assert saved["scope"]["exchange"] == "bitget"
+    assert saved["safety"]["will_submit_orders"] is False
+    assert "bitget-key-value" not in saved_text
+    assert "bitget-secret-value" not in saved_text
+    assert "bitget-passphrase-value" not in saved_text
+
+
+def test_bitget_live_readiness_cli_summarizes_account_and_sync_outputs(monkeypatch, capsys, tmp_path):
+    config = RuntimeConfig(
+        mode="live",
+        exchange="bitget",
+        symbol="BTCUSDT",
+        interval="4h",
+        use_testnet=False,
+        allow_live=True,
+        live_dry_run=False,
+        enable_live_autotrade=True,
+        live_confirmation="LIVE:bitget:BTCUSDT:4h",
+        live_credentials_confirmed=True,
+        max_live_order_usdt=5,
+        db_path=str(tmp_path / "test.sqlite3"),
+        bitget_api_key="bitget-key-value",
+        bitget_api_secret="bitget-secret-value",
+        bitget_api_passphrase="bitget-passphrase-value",
+    )
+    evidence_path = tmp_path / "artifacts" / "bitget-live-with-account.json"
+    broker_calls = []
+    runner_calls = []
+
+    class ReadOnlyBroker:
+        def account_balance(self, symbol):
+            broker_calls.append(symbol)
+            return AccountBalance(
+                symbol=symbol,
+                base_asset="BTC",
+                quote_asset="USDT",
+                usdt_balance=9.12,
+                asset_balance=0.001,
+                quote_locked=0.34,
+                asset_locked=0.0001,
+                status="synced",
+            )
+
+        def submit_order(self, order):
+            raise AssertionError("bitget-live-readiness must not submit orders")
+
+        def cancel_order(self, symbol, order_id):
+            raise AssertionError("bitget-live-readiness must not cancel orders")
+
+    class ReadOnlyRunner:
+        def __init__(self, received_config):
+            runner_calls.append(("init", received_config.exchange))
+
+        def sync_exchange_fills(self, limit=500):
+            runner_calls.append(("sync", limit))
+            return {
+                "status": "synced",
+                "symbol": "BTCUSDT",
+                "seen_fills": 2,
+                "imported_fills": 1,
+                "average_entry_price": 71234.56,
+                "fills": [
+                    {
+                        "exchange_order_id": "sync-order-id",
+                        "exchange_trade_id": "sync-trade-id",
+                    }
+                ],
+            }
+
+        def run_once(self):
+            raise AssertionError("bitget-live-readiness must not run once")
+
+        def run_loop(self, *args, **kwargs):
+            raise AssertionError("bitget-live-readiness must not run loops")
+
+    monkeypatch.setattr(cli, "load_config", lambda validate_execution=True: config)
+    monkeypatch.setattr(cli, "run_readiness", lambda received_config, storage=None: {"status": "pass", "checks": []})
+    monkeypatch.setattr(cli, "run_exchange_health_check", lambda received_config, timeout_seconds=5.0: {"status": "pass", "timeout_seconds": timeout_seconds})
+    monkeypatch.setattr(cli, "run_live_setup_check", lambda received_config, timeout_seconds=5.0: {"status": "pass", "will_submit_orders": False, "timeout_seconds": timeout_seconds})
+    monkeypatch.setattr(
+        cli,
+        "run_launch_checklist",
+        lambda received_config, target_mode=None: {
+            "status": "pass",
+            "phase": "blocked_before_bitget_live_canary",
+            "target_mode": target_mode,
+            "checks": [
+                {
+                    "name": "bitget_live_canary_order",
+                    "status": "pass",
+                    "details": {
+                        "open_order_count": 0,
+                        "latest_order": {"exchange_order_id": "live-order-id"},
+                    },
+                }
+            ],
+            "latest_order": {"exchange_order_id": "live-order-id"},
+        },
+    )
+    monkeypatch.setattr(cli, "create_broker", lambda received_config: ReadOnlyBroker())
+    monkeypatch.setattr(cli, "TradingRunner", ReadOnlyRunner)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "kxian-bot",
+            "bitget-live-readiness",
+            "--include-account",
+            "--sync-fills",
+            "--sync-limit",
+            "25",
+            "--evidence-out",
+            str(evidence_path),
+        ],
+    )
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    raw_output = json.dumps(output)
+    assert broker_calls == ["BTCUSDT"]
+    assert runner_calls == [("init", "bitget"), ("sync", 25)]
+    assert output["status"] == "pass"
+    assert output["account_balance"] == {
+        "status": "synced",
+        "symbol": "BTCUSDT",
+        "base_asset": "BTC",
+        "quote_asset": "USDT",
+    }
+    assert output["sync_fills_result"] == {
+        "status": "synced",
+        "symbol": "BTCUSDT",
+        "seen_fills": 2,
+        "imported_fills": 1,
+    }
+    assert "9.12" not in raw_output
+    assert "0.001" not in raw_output
+    assert "sync-order-id" not in raw_output
+    assert "sync-trade-id" not in raw_output
+    assert "live-order-id" not in raw_output
+    assert "exchange_order_id" not in raw_output
+    assert '"order_id"' not in raw_output
+    assert "trade_id" not in raw_output
+    saved_text = evidence_path.read_text(encoding="utf-8")
+    assert "bitget-key-value" not in saved_text
+    assert "bitget-secret-value" not in saved_text
+    assert "bitget-passphrase-value" not in saved_text
+    assert "live-order-id" not in saved_text
+    assert "sync-order-id" not in saved_text
+    assert "sync-trade-id" not in saved_text
 
 
 def test_run_once_cli_uses_relaxed_config_for_structured_launch_gate(monkeypatch, capsys, tmp_path):

@@ -12,7 +12,7 @@ from kxian_bot.bitget_live_gray import approve_bitget_live_gray
 from kxian_bot.brokers.base import create_broker
 from kxian_bot.config import load_config
 from kxian_bot.dashboard import run_dashboard
-from kxian_bot.evidence import build_testnet_evidence, write_evidence
+from kxian_bot.evidence import build_bitget_live_evidence, build_testnet_evidence, write_evidence
 from kxian_bot.exchange_health import run_exchange_health_check
 from kxian_bot.launch_checklist import run_launch_checklist
 from kxian_bot.live_setup import run_live_setup_check
@@ -45,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--timeout-seconds", type=float, default=5.0)
     live_setup_parser = subparsers.add_parser("live-setup-check")
     live_setup_parser.add_argument("--timeout-seconds", type=float, default=5.0)
+    bitget_live_readiness_parser = subparsers.add_parser("bitget-live-readiness")
+    bitget_live_readiness_parser.add_argument("--timeout-seconds", type=float, default=5.0)
+    bitget_live_readiness_parser.add_argument("--evidence-out", type=str, default=None)
+    bitget_live_readiness_parser.add_argument("--include-account", action="store_true")
+    bitget_live_readiness_parser.add_argument("--sync-fills", action="store_true")
+    bitget_live_readiness_parser.add_argument("--sync-limit", type=int, default=500)
     bitget_live_gray_parser = subparsers.add_parser("approve-bitget-live-gray")
     bitget_live_gray_parser.add_argument("--updated-by", type=str, default="cli")
     bitget_live_gray_parser.add_argument("--confirmation", type=str, required=True)
@@ -469,6 +475,7 @@ def main() -> None:
         "exchange-health",
         "launch-checklist",
         "live-setup-check",
+        "bitget-live-readiness",
         "paper-dry-run",
         "promote-profile-to-live",
         "promote-profile-to-testnet",
@@ -551,6 +558,20 @@ def main() -> None:
 
         if args.command == "live-setup-check":
             result = run_live_setup_check(config, timeout_seconds=args.timeout_seconds)
+            print(json.dumps(result, ensure_ascii=False))
+            if result["status"] != "pass":
+                raise SystemExit(2)
+            return
+
+        if args.command == "bitget-live-readiness":
+            result = _run_bitget_live_readiness(
+                config,
+                timeout_seconds=args.timeout_seconds,
+                evidence_out=args.evidence_out,
+                include_account=args.include_account,
+                sync_fills=args.sync_fills,
+                sync_limit=args.sync_limit,
+            )
             print(json.dumps(result, ensure_ascii=False))
             if result["status"] != "pass":
                 raise SystemExit(2)
@@ -1471,6 +1492,222 @@ def _write_testnet_evidence_if_requested(
             launch_checklist=launch_checklist,
         ),
     )
+
+
+def _run_bitget_live_readiness(
+    config,
+    *,
+    timeout_seconds: float,
+    evidence_out: str | None,
+    include_account: bool,
+    sync_fills: bool,
+    sync_limit: int,
+) -> dict:
+    bitget_config = config.model_copy(
+        update={
+            "mode": "live",
+            "exchange": "bitget",
+            "symbol": "BTCUSDT",
+            "interval": "4h",
+            "use_testnet": False,
+            "market_data_source": "exchange",
+        }
+    )
+    storage = SQLiteStorage(bitget_config.db_path)
+    readiness = run_readiness(bitget_config, storage)
+    exchange_health = run_exchange_health_check(bitget_config, timeout_seconds=timeout_seconds)
+    live_setup = run_live_setup_check(bitget_config, timeout_seconds=timeout_seconds)
+    launch_checklist = run_launch_checklist(bitget_config, target_mode="live")
+    account_balance = None
+    sync_result = None
+    if include_account:
+        broker = create_broker(bitget_config)
+        result = broker.account_balance(bitget_config.symbol)
+        account_balance = result if isinstance(result, dict) else result.model_dump()
+    if sync_fills:
+        runner = TradingRunner(bitget_config)
+        sync_result = runner.sync_exchange_fills(limit=sync_limit)
+
+    checks = [
+        {"name": "readiness", "status": readiness.get("status"), "message": readiness.get("reason") or readiness.get("status")},
+        {"name": "exchange_health", "status": exchange_health.get("status"), "message": exchange_health.get("reason") or exchange_health.get("status")},
+        {"name": "live_setup_check", "status": live_setup.get("status"), "message": live_setup.get("reason") or live_setup.get("status")},
+        {
+            "name": "launch_checklist",
+            "status": launch_checklist.get("status"),
+            "message": launch_checklist.get("reason") or launch_checklist.get("phase"),
+        },
+    ]
+    if account_balance is not None:
+        checks.append({"name": "account_balance", "status": account_balance.get("status"), "message": account_balance.get("reason") or account_balance.get("status")})
+    if sync_result is not None:
+        checks.append({"name": "sync_fills", "status": sync_result.get("status"), "message": sync_result.get("reason") or sync_result.get("status")})
+    status = "pass" if all(_bitget_live_readiness_check_ok(check) for check in checks) else "blocked"
+    result = {
+        "status": status,
+        "reason": None if status == "pass" else "bitget_live_readiness_blocked",
+        "mode": "live",
+        "exchange": "bitget",
+        "symbol": "BTCUSDT",
+        "interval": "4h",
+        "use_testnet": False,
+        "will_submit_orders": False,
+        "timeout_seconds": timeout_seconds,
+        "include_account": include_account,
+        "sync_fills": sync_fills,
+        "checks": checks,
+        "readiness": _bitget_live_readiness_status_summary(readiness, include_checks=True),
+        "exchange_health": _bitget_live_readiness_status_summary(exchange_health, include_checks=True),
+        "live_setup_check": _bitget_live_readiness_status_summary(live_setup, include_checks=True),
+        "launch_checklist": _bitget_live_readiness_launch_summary(launch_checklist),
+        "account_balance": _bitget_live_readiness_account_summary(account_balance),
+        "sync_fills_result": _bitget_live_readiness_sync_summary(sync_result),
+        "redaction": {
+            "credential_values": "redacted",
+            "order_identifiers": "status_summary_only",
+            "account_balances": "status_only",
+            "fills": "counts_only",
+        },
+        "next_steps": _bitget_live_readiness_next_steps(readiness, live_setup, launch_checklist),
+    }
+    if evidence_out:
+        write_evidence(
+            evidence_out,
+            build_bitget_live_evidence(
+                bitget_config,
+                storage,
+                command="bitget-live-readiness",
+                readiness=readiness,
+                exchange_health=exchange_health,
+                live_setup_check=live_setup,
+                launch_checklist=launch_checklist,
+                account_balance=account_balance,
+                sync_fills=sync_result,
+            ),
+        )
+    return result
+
+
+def _bitget_live_readiness_check_ok(check: dict) -> bool:
+    return check.get("status") in {"pass", "synced"}
+
+
+def _bitget_live_readiness_status_summary(payload: dict | None, *, include_checks: bool) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    summary = {
+        "status": payload.get("status"),
+        "reason": payload.get("reason"),
+        "phase": payload.get("phase"),
+        "mode": payload.get("mode"),
+        "exchange": payload.get("exchange"),
+        "symbol": payload.get("symbol"),
+        "interval": payload.get("interval"),
+        "will_submit_orders": payload.get("will_submit_orders"),
+        "timeout_seconds": payload.get("timeout_seconds"),
+    }
+    if include_checks and isinstance(payload.get("checks"), list):
+        summary["checks"] = [
+            _bitget_live_readiness_check_summary(check)
+            for check in payload["checks"]
+            if isinstance(check, dict)
+        ]
+    return _drop_empty_values(summary)
+
+
+def _bitget_live_readiness_launch_summary(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    checks = []
+    for check in payload.get("checks", []):
+        if not isinstance(check, dict):
+            continue
+        checks.append(_bitget_live_readiness_check_summary(check))
+    return _drop_empty_values(
+        {
+            "status": payload.get("status"),
+            "reason": payload.get("reason"),
+            "phase": payload.get("phase"),
+            "target_mode": payload.get("target_mode"),
+            "exchange": payload.get("exchange"),
+            "symbol": payload.get("symbol"),
+            "interval": payload.get("interval"),
+            "checks": checks,
+        }
+    )
+
+
+def _bitget_live_readiness_check_summary(check: dict) -> dict:
+    details = check.get("details") if isinstance(check.get("details"), dict) else {}
+    return _drop_empty_values(
+        {
+            "name": check.get("name"),
+            "status": check.get("status"),
+            "message": check.get("message"),
+            "failures": details.get("failures"),
+            "failed_checks": details.get("failed_checks"),
+            "open_order_count": details.get("open_order_count"),
+        }
+    )
+
+
+def _bitget_live_readiness_account_summary(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    return _drop_empty_values(
+        {
+            "status": payload.get("status"),
+            "reason": payload.get("reason"),
+            "symbol": payload.get("symbol"),
+            "base_asset": payload.get("base_asset"),
+            "quote_asset": payload.get("quote_asset"),
+        }
+    )
+
+
+def _bitget_live_readiness_sync_summary(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    return _drop_empty_values(
+        {
+            "status": payload.get("status"),
+            "reason": payload.get("reason"),
+            "symbol": payload.get("symbol"),
+            "seen_fills": payload.get("seen_fills"),
+            "imported_fills": payload.get("imported_fills"),
+        }
+    )
+
+
+def _drop_empty_values(payload: dict) -> dict:
+    return {key: value for key, value in payload.items() if value is not None and value != ""}
+
+
+def _bitget_live_readiness_next_steps(readiness: dict, live_setup: dict, launch_checklist: dict) -> list[str]:
+    steps = [
+        "do not run approve-bitget-live-gray, trade-loop, run-once, test-order, promote, or cancel-order from this read-only command",
+        "keep Bitget live blocked until strategy_gate, sample_validation_gate, stress_gate, and walk_forward_gate all pass",
+    ]
+    for payload in (readiness, live_setup, launch_checklist):
+        for step in payload.get("next_steps", []) if isinstance(payload, dict) else []:
+            if _bitget_live_readiness_allows_next_step(step) and step not in steps:
+                steps.append(step)
+    return steps
+
+
+def _bitget_live_readiness_allows_next_step(step: str) -> bool:
+    blocked_fragments = (
+        "approve-bitget-live-gray",
+        "trade-loop",
+        "run-once",
+        "test-order",
+        "promote",
+        "promotion",
+        "canary",
+        "cancel-order",
+    )
+    lowered = step.lower()
+    return not any(fragment in lowered for fragment in blocked_fragments)
 
 
 def parse_int_list(value: str) -> list[int]:

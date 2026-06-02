@@ -77,7 +77,8 @@ def test_chinese_docs_record_testnet_acceptance_without_live_steps():
 
     assert "88878706-3996-4c69-876a-2275612d4f2d" in record
     assert "332ce95c-dcc2-4e8b-9f87-b335f72db2db" in record
-    assert "exchange_order_id=9311985" in record
+    assert "exchange_order_id=<测试网订单号已脱敏>" in record
+    assert re.search(r"exchange_order_id=\d+", record) is None
     assert "phase=testnet_observed_ready_for_live_review" in record
     assert "测试网闭环" in runbook
     assert "--evidence-out" in runbook
