@@ -4,11 +4,13 @@
 
 ## 安全边界
 
+- 如果 `readiness` 仍被 `strategy_gate`、`sample_validation_gate`、`stress_gate`、`walk_forward_gate` 任一项阻断，必须停在只读研究阶段，不得执行 `approve-bitget-live-gray`、`trade-loop` 或任何 canary。
 - 不使用 `mode=testnet + exchange=bitget`，该组合会被系统阻断。
 - 不执行 `promote-profile-to-live` 作为 Bitget 灰度入口，改用 `approve-bitget-live-gray` 写入 Bitget 专属批准证据。
 - 不用 `test-order` 做 Bitget live canary；Bitget live 下该命令会被阻断。
 - 不用 `run-once` 做 Bitget live 执行；只允许 `trade-loop --max-iterations 1 --sleep-seconds 0`。
 - 不启动无界 live loop，不允许 `--max-iterations` 为空或大于 1。
+- 不在没有 open/submitted/partial/unknown 真实订单的情况下执行 `cancel-order`；只有人工确认需要清理残单时才允许使用。
 - 不回显、不提交、不截图 API key、secret、passphrase、签名、请求头。
 - 首次 canary 的单笔上限固定为 `KXIAN_MAX_LIVE_ORDER_USDT=5`。
 

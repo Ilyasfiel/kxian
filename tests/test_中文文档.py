@@ -42,3 +42,25 @@ def test_bitget_gray_runbook_covers_manual_confirmation_and_single_canary():
     assert "sync-fills" in runbook
     assert "launch-checklist --target live" in runbook
     assert "status=pass" in runbook
+    assert "strategy_gate" in runbook
+    assert "sample_validation_gate" in runbook
+    assert "stress_gate" in runbook
+    assert "walk_forward_gate" in runbook
+    assert "不得执行 `approve-bitget-live-gray`" in runbook
+    assert "没有 open/submitted/partial/unknown 真实订单" in runbook
+
+
+def test_bitget_strategy_evidence_report_keeps_live_blocked():
+    report = (ROOT / "docs" / "Bitget策略证据研究报告.md").read_text(encoding="utf-8")
+    assert "blocked_before_bitget_live_canary" in report
+    assert "策略证据不足" in report
+    assert "prefilter_pass_count=0" in report
+    assert "不得执行 `approve-bitget-live-gray`" in report
+    assert "`trade-loop`" in report
+    assert "`run-once`" in report
+    assert "`test-order`" in report
+    assert "`promote-profile-to-live`" in report
+    assert "`cancel-order`" in report
+    assert "open/submitted/partial/unknown" in report
+    assert "不得把 `screen-samples` 的失败预筛结果包装成上线证据" in report
+    assert "如果没有新的未触碰样本外窗口，不允许生成 live profile" in report

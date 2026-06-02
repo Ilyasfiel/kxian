@@ -324,11 +324,13 @@ Run a continuous paper-trading loop against live public exchange data:
 kxian-bot trade-loop
 ```
 
-`trade-loop` runs the same preflight checks by default before starting. In `testnet` and `live` modes it also enforces the matching `launch-checklist` and `exchange-health` before creating a runner. If readiness, launch checklist, or exchange connectivity fails, it exits with code 2 and prints a JSON payload with `reason: "preflight_failed"` or `reason: "launch_checklist_blocked"` plus the failed checks and next steps. For a controlled local smoke test only, you can bypass startup checks:
+`trade-loop` runs the same preflight checks by default before starting. In `testnet` and `live` modes it also enforces the matching `launch-checklist` and `exchange-health` before creating a runner. If readiness, launch checklist, or exchange connectivity fails, it exits with code 2 and prints a JSON payload with `reason: "preflight_failed"` or `reason: "launch_checklist_blocked"` plus the failed checks and next steps. For a controlled local paper/offline smoke test only, you can bypass startup checks:
 
 ```powershell
 kxian-bot trade-loop --max-iterations 1 --sleep-seconds 0 --skip-preflight
 ```
+
+Do not use `--skip-preflight` for Bitget live, Binance/OKX live, or any path that can submit exchange orders. It is only for local smoke rehearsal where the operator has already forced a non-live/offline scope.
 
 For a bounded smoke test that will not run forever:
 

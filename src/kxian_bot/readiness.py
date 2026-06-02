@@ -244,7 +244,7 @@ def _next_steps(config: RuntimeConfig, checks: list[dict[str, Any]], preflight: 
     if {"strategy_gate", "stress_gate", "walk_forward_gate"} & failed_preflight:
         steps.append("run backtest, stress-backtest, and walk-forward for the exact current strategy parameters")
     if "sample_validation_gate" in failed_preflight:
-        steps.append("run select-samples --promote so the active profile has passing multi-sample evidence")
+        steps.append("run select-samples without --promote first; only promote after sample validation, stress, and walk-forward all pass")
     if "market_data" in failed_preflight and config.market_data_source == "sqlite":
         steps.append("download or import enough candles for the current interval and window")
     if "open_orders" in failed_preflight:

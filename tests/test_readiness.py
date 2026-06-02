@@ -272,7 +272,8 @@ def test_readiness_points_to_multi_sample_promotion_when_evidence_missing(tmp_pa
     result = run_readiness(config, storage)
 
     assert result["status"] == "fail"
-    assert any("select-samples --promote" in step for step in result["next_steps"])
+    assert any("select-samples without --promote" in step for step in result["next_steps"])
+    assert any("only promote after sample validation, stress, and walk-forward all pass" in step for step in result["next_steps"])
 
 
 def test_readiness_blocks_live_mode_until_all_live_switches_are_confirmed(tmp_path):
